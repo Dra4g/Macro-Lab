@@ -37,8 +37,8 @@ public final class Stats {
         Objects.checkFromToIndex(from, to, x.length);
         Objects.checkFromToIndex(from, to, y.length);
         if (lag <= from - to
-                || lag >= to - from) return new Correlation(Double.NaN, 0);
-
+                || lag >= to - from)
+            return new Correlation(Double.NaN, 0);
         if (spearman) {
             /* I ranghi vanno rifatti sulle COPPIE valide, non sulla serie intera.
                [1, 2, NaN, 4] contro [5, 7, 8, 9] -> tre coppie, tre ranghi. */

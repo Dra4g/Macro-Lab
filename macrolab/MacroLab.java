@@ -14,12 +14,18 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 
 public final class MacroLab extends JPanel {
-    static final Color BG = new Color(245, 245, 242), PANEL = Color.WHITE, INK = new Color(40, 43, 46), MUTED = new Color(99, 105, 109), GRID = new Color(225, 228, 229), ACCENT = new Color(48, 103, 137);
+    static final Color BG = new Color(246, 245, 241), PANEL = Color.WHITE, INK = new Color(40, 43, 46), MUTED = new Color(99, 105, 109), GRID = new Color(225, 228, 229), ACCENT = new Color(45, 92, 113);
     static final Color POSITIVE = new Color(178, 213, 194), NEGATIVE = new Color(234, 192, 178);
-    static final String[] MATRIX_NAMES = {"BTP", "BCE", "HICP", "SOX", "FX", "EURO50", "Banche", "IT10a"};
+    static final String[] MATRIX_NAMES = {"BTP", "BCE", "HICP", "SOX", "FX", "EU50", "Banc.", "IT10"};
     final Path directory;
     final JLabel status = new JLabel("Scarica i dati online per iniziare.");
-    final JLabel insight = new JLabel(" ");
+    final JTextArea insight = paragraph("", 3);
+    final JLabel pageTitle = new JLabel();
+    final JLabel periodSummary = new JLabel();
+    final JTextArea pageHelp = paragraph("", 3);
+    final JTextArea transformHelp = paragraph("", 4), methodHelp = paragraph("", 4), currencyHelp = paragraph("", 4), lagHelp = paragraph("", 4);
+    final JPanel pairControls = column(), rollingControls = column();
+    final JButton png = button("Salva immagine");
     final javax.swing.table.DefaultTableModel dataRows = new DefaultTableModel(new String[]{"Indicatore", "Ultimo valore", "Mese", "Dati"}, 0) {
          public boolean isCellEditable(final int row,
                                        final int column) {
@@ -32,7 +38,7 @@ public final class MacroLab extends JPanel {
     final JComboBox<DataService.Source> xChoice = new JComboBox<>(DataService.SOURCES), yChoice = new JComboBox<>(DataService.SOURCES);
     final JSpinner lag = new JSpinner(new SpinnerNumberModel(0, -24, 24, 1));
     final JSpinner window = new JSpinner(new SpinnerNumberModel(24, 6, 120, 1));
-    final JCheckBox euroSox = new JCheckBox("SOX convertito in EUR");
+    final JCheckBox euroSox = new JCheckBox("Semiconduttori in euro");
     final JCheckBox[] visible = new JCheckBox[DataService.SOURCES.length];
     final JTabbedPane tabs = new JTabbedPane();
     final Plot overview = new Plot(0), matrix = new Plot(1), scatter = new Plot(2), rolling = new Plot(3);
@@ -50,70 +56,287 @@ public final class MacroLab extends JPanel {
 
     public MacroLab(final Path directory) {
         this.directory = directory;
-        setLayout(new BorderLayout(0, 12));
-        setBorder(new EmptyBorder(16, 18, 12, 18));
+        setLayout(new BorderLayout(18, 14));
+        setBorder(new EmptyBorder(18, 22, 12, 22));
         setBackground(BG);
-        final JPanel top = new JPanel(); top.setOpaque(false); top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+
         final JPanel heading = row();
-        final JLabel title = new JLabel("Analisi dei mercati"); title.setFont(new Font("Segoe UI", Font.BOLD, 21)); title.setForeground(INK);
-        heading.add(title); heading.add(Box.createHorizontalGlue()); heading.add(refresh); heading.add(Box.createHorizontalStrut(6));
-        final JButton offline = button("Usa dati salvati"); heading.add(offline); heading.add(Box.createHorizontalStrut(6));
-        final JButton export = button("Esporta CSV"); heading.add(export); heading.add(Box.createHorizontalStrut(6));
-        final JButton png = button("Salva grafico"); heading.add(png);
-        top.add(heading); top.add(Box.createVerticalStrut(14));
-        final JPanel controls = row();
-        start.setMaximumSize(new Dimension(95, 28)); end.setMaximumSize(new Dimension(95, 28));
-        start.setToolTipText("Anno e mese, ad esempio 2020-01"); end.setToolTipText("Anno e mese, ad esempio 2025-12");
-        controls.add(label("Da", INK)); controls.add(start); controls.add(label("a", INK)); controls.add(end);
-        final JButton apply = button("Applica"); controls.add(Box.createHorizontalStrut(6)); controls.add(apply);
-        controls.add(Box.createHorizontalStrut(16)); controls.add(label("Valori", INK)); controls.add(transform);
-        controls.add(label("Metodo", INK)); controls.add(method); controls.add(Box.createHorizontalStrut(10)); controls.add(euroSox); controls.add(Box.createHorizontalGlue());
-        transform.setMaximumSize(new Dimension(180, 28)); method.setMaximumSize(new Dimension(110, 28));
-        top.add(controls); top.add(Box.createVerticalStrut(7));
-        final JPanel pair = row(); pair.add(label("Confronta", INK)); pair.add(xChoice); pair.add(label("con", INK)); pair.add(yChoice);
-        xChoice.setMaximumSize(new Dimension(230, 28)); yChoice.setMaximumSize(new Dimension(230, 28));
-        yChoice.setSelectedIndex(1); pair.add(label("Ritardo Y (mesi)", INK)); pair.add(lag);
-        lag.setMaximumSize(new Dimension(62, 28)); window.setMaximumSize(new Dimension(62, 28));
-        final JPanel rollingControls = row(); rollingControls.add(label("Finestra (mesi)", INK)); rollingControls.add(window); pair.add(rollingControls); pair.add(Box.createHorizontalGlue());
-        pair.setVisible(false); top.add(pair);
-        add(top, BorderLayout.NORTH);
-        final JPanel linePage = new JPanel(new BorderLayout()); linePage.setOpaque(false);
-        final JPanel legend = new JPanel(new GridLayout(2, 4, 6, 3)); legend.setBorder(new EmptyBorder(8, 12, 6, 12));
+        final JPanel introduction = column();
+        final JLabel title = new JLabel("Analisi dei mercati");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        introduction.add(title);
+        introduction.add(Box.createVerticalStrut(3));
+        introduction.add(label("BTP, tassi, inflazione e mercati azionari", MUTED));
+        introduction.add(Box.createVerticalStrut(3));
+        periodSummary.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        periodSummary.setForeground(MUTED);
+        introduction.add(periodSummary);
+        heading.add(introduction);
+        heading.add(Box.createHorizontalGlue());
+        refresh.setToolTipText("Scarica le serie aggiornate. Se una fonte non risponde, usa la copia già salvata.");
+        refresh.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        refresh.setBackground(ACCENT);
+        refresh.setForeground(Color.WHITE);
+        refresh.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(ACCENT), new EmptyBorder(8, 13, 8, 13)));
+        heading.add(refresh);
+        heading.add(Box.createHorizontalStrut(7));
+        final JButton offline = button("Dati salvati");
+        offline.setToolTipText("Apri l'ultimo download senza collegarti a Internet.");
+        heading.add(offline);
+        heading.add(Box.createHorizontalStrut(7));
+        final JButton export = button("Esporta dati");
+        export.setToolTipText("Salva i dati e le correlazioni in CSV, più una nota con fonti e parametri.");
+        heading.add(export);
+        heading.add(Box.createHorizontalStrut(7));
+        png.setToolTipText("Salva il grafico aperto come immagine PNG.");
+        heading.add(png);
+        add(heading, BorderLayout.NORTH);
+
+        final JPanel settings = new Sidebar();
+        settings.add(pairControls);
+        settings.setBorder(new EmptyBorder(4, 0, 12, 16));
+        settings.add(section("Periodo da analizzare"));
+        final JPanel dates = new JPanel(new GridLayout(1, 2, 10, 0));
+        dates.setOpaque(false);
+        dates.setAlignmentX(Component.LEFT_ALIGNMENT);
+        dates.setMinimumSize(new Dimension(0, 58));
+        dates.setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
+        dates.add(field("Dal mese", start));
+        dates.add(field("Al mese", end));
+        settings.add(dates);
+        settings.add(paragraph("Scrivi anno e mese: 2020-01 significa gennaio 2020. Il mese in corso è escluso.", 3));
+        final JButton apply = button("Applica periodo");
+        apply.setAlignmentX(Component.LEFT_ALIGNMENT);
+        settings.add(apply);
+        settings.add(section("Come confrontare i dati"));
+        settings.add(field("Valori da usare", transform));
+        settings.add(transformHelp);
+        settings.add(field("Metodo di correlazione", method));
+        settings.add(methodHelp);
+        euroSox.setOpaque(false);
+        euroSox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        euroSox.setToolTipText("SOX è quotato in dollari. La conversione in euro usa il cambio EUR/USD di ogni mese.");
+        settings.add(euroSox);
+        settings.add(currencyHelp);
+
+        pairControls.add(section("Due indicatori a confronto"));
+        pairControls.add(field("Primo indicatore (asse X)", xChoice));
+        pairControls.add(Box.createVerticalStrut(8));
+        pairControls.add(field("Secondo indicatore (asse Y)", yChoice));
+        yChoice.setSelectedIndex(1);
+        pairControls.add(Box.createVerticalStrut(10));
+        pairControls.add(field("Sposta il secondo indicatore (mesi)", lag));
+        lag.setToolTipText("0: stesso mese. +3: X a gennaio e Y ad aprile. -3: X ad aprile e Y a gennaio.");
+        pairControls.add(lagHelp);
+        rollingControls.add(field("Mesi in ogni calcolo", window));
+        rollingControls.add(paragraph("Con 24 mesi, ogni punto usa i due anni che terminano in quel mese. Una finestra breve mostra più oscillazioni.", 4));
+        pairControls.add(rollingControls);
+        settings.add(Box.createVerticalGlue());
+        final JScrollPane settingsScroll = new JScrollPane(settings);
+        settingsScroll.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, GRID));
+        settingsScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        settingsScroll.setPreferredSize(new Dimension(285, 400));
+        settingsScroll.getViewport().setBackground(BG);
+        settingsScroll.getVerticalScrollBar().setUnitIncrement(18);
+        add(settingsScroll, BorderLayout.WEST);
+
+        final JPanel content = new JPanel(new BorderLayout(0, 10));
+        content.setOpaque(false);
+        final JPanel pageHeading = column();
+        pageTitle.setFont(new Font("Segoe UI", Font.BOLD, 19));
+        pageTitle.setAlignmentX(Component.LEFT_ALIGNMENT);
+        pageHeading.add(pageTitle);
+        pageHeading.add(Box.createVerticalStrut(5));
+        pageHelp.setPreferredSize(new Dimension(0, 70));
+        pageHeading.add(pageHelp);
+        content.add(pageHeading, BorderLayout.NORTH);
+
+        final JPanel linePage = new JPanel(new BorderLayout());
+        linePage.setBackground(PANEL);
+        final JPanel legend = new JPanel(new GridLayout(4, 2, 14, 4));
+        legend.setBackground(PANEL);
+        legend.setBorder(new EmptyBorder(12, 15, 8, 15));
         for (int i = 0; i < visible.length; i++) {
             visible[i] = new JCheckBox(DataService.SOURCES[i].name(), i < 3);
-            visible[i].setForeground(DataService.SOURCES[i].color()); visible[i].setOpaque(false);
-            visible[i].addActionListener((final ActionEvent e) -> overview.repaint()); legend.add(visible[i]);
+            visible[i].setForeground(DataService.SOURCES[i].color());
+            visible[i].setOpaque(false);
+            visible[i].setToolTipText("<html><body width='350'>" + DataService.SOURCES[i].description() + "</body></html>");
+            visible[i].addActionListener((final ActionEvent e) -> overview.repaint());
+            legend.add(visible[i]);
         }
-        legend.setOpaque(true); legend.setBackground(PANEL); linePage.setOpaque(true); linePage.setBackground(PANEL);
-        linePage.add(legend, BorderLayout.NORTH); linePage.add(overview);
-        tabs.addTab("Grafico", linePage); tabs.addTab("Correlazioni", matrix); tabs.addTab("Confronto", scatter); tabs.addTab("Nel tempo", rolling);
-        final JTable dataTable = new JTable(dataRows); dataTable.setRowHeight(34); dataTable.setFillsViewportHeight(true); dataTable.setShowVerticalLines(false);
-        dataTable.getTableHeader().setReorderingAllowed(false); dataTable.getColumnModel().getColumn(0).setPreferredWidth(310);
-        final JPanel dataPage = new JPanel(new BorderLayout(0, 10)); dataPage.setBackground(PANEL); dataPage.setBorder(new EmptyBorder(14, 14, 14, 14));
-        dataPage.add(label("Ultimi valori disponibili. Il periodo scelto si applica ai grafici e alle correlazioni.", MUTED), BorderLayout.NORTH);
-        dataPage.add(new JScrollPane(dataTable), BorderLayout.CENTER); tabs.addTab("Dati", dataPage);
-        notes.setEditable(false); notes.setLineWrap(true); notes.setWrapStyleWord(true); notes.setMargin(new Insets(20, 22, 20, 22)); notes.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        tabs.addTab("Fonti e metodo", new JScrollPane(notes)); add(tabs, BorderLayout.CENTER);
-        tabs.addChangeListener((final javax.swing.event.ChangeEvent e) -> {
-            pair.setVisible(tabs.getSelectedIndex() == 2 || tabs.getSelectedIndex() == 3);
-            rollingControls.setVisible(tabs.getSelectedIndex() == 3);
-            insight.setVisible(tabs.getSelectedIndex() == 2 || tabs.getSelectedIndex() == 3);
-            png.setEnabled(tabs.getSelectedIndex() < 4); top.revalidate();
+        linePage.add(legend, BorderLayout.NORTH);
+        linePage.add(overview, BorderLayout.CENTER);
+        tabs.addTab("Andamento", linePage);
+        tabs.addTab("Correlazioni", matrix);
+        tabs.addTab("Due indicatori", scatter);
+        tabs.addTab("Nel tempo", rolling);
+        tabs.setToolTipTextAt(0, "Sovrapponi le serie per confrontarne l'andamento.");
+        tabs.setToolTipTextAt(1, "Leggi la relazione tra ogni coppia di indicatori nello stesso mese.");
+        tabs.setToolTipTextAt(2, "Ogni punto mette a confronto due osservazioni mensili.");
+        tabs.setToolTipTextAt(3, "Verifica come cambia la correlazione da un periodo all'altro.");
+
+        final JTable dataTable = new JTable(dataRows);
+        dataTable.setRowHeight(36);
+        dataTable.setFillsViewportHeight(true);
+        dataTable.setShowVerticalLines(false);
+        dataTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        dataTable.getTableHeader().setReorderingAllowed(false);
+        dataTable.getColumnModel().getColumn(0).setPreferredWidth(270);
+        final JTextArea dataDescription = paragraph("Seleziona una riga per sapere che cosa misura l'indicatore.", 5);
+        dataTable.getSelectionModel().addListSelectionListener((final javax.swing.event.ListSelectionEvent e) -> {
+            final int selected;
+            if ((selected = dataTable
+                    .getSelectedRow()) >= 0) {
+                dataDescription.setText(DataService.SOURCES[selected].description());
+            }
         });
-        final JPanel footer = new JPanel(new GridLayout(2, 1, 0, 7)); footer.setOpaque(false);
-        insight.setForeground(INK); insight.setVisible(false); status.setForeground(MUTED); footer.add(insight); footer.add(status); add(footer, BorderLayout.SOUTH);
-        refresh.addActionListener((final ActionEvent e) -> load(true)); offline.addActionListener((final ActionEvent e) -> load(false));
-        apply.addActionListener((final ActionEvent e) -> calculate()); start.addActionListener((final ActionEvent e) -> calculate()); end.addActionListener((final ActionEvent e) -> calculate());
-        transform.addActionListener((final ActionEvent e) -> calculate()); method.addActionListener((final ActionEvent e) -> calculate()); euroSox.addActionListener((final ActionEvent e) -> calculate());
-        xChoice.addActionListener((final ActionEvent e) -> calculate()); yChoice.addActionListener((final ActionEvent e) -> calculate());
-        lag.addChangeListener((final javax.swing.event.ChangeEvent e) -> calculate()); window.addChangeListener((final javax.swing.event.ChangeEvent e) -> calculate());
-        export.addActionListener((final ActionEvent e) -> save(false)); png.addActionListener((final ActionEvent e) -> save(true));
+        final JPanel dataPage = new JPanel(new BorderLayout(0, 12));
+        dataPage.setBackground(PANEL);
+        dataPage.setBorder(new EmptyBorder(14, 14, 14, 14));
+        dataPage.add(new JScrollPane(dataTable), BorderLayout.CENTER);
+        dataPage.add(dataDescription, BorderLayout.SOUTH);
+        tabs.addTab("Dati", dataPage);
+        notes.setEditable(false);
+        notes.setLineWrap(true);
+        notes.setWrapStyleWord(true);
+        notes.setMargin(new Insets(20, 22, 20, 22));
+        notes.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        tabs.addTab("Fonti", new JScrollPane(notes));
+        content.add(tabs, BorderLayout.CENTER);
+        insight.setForeground(INK);
+        /* Prima apertura: l'area era nascosta, quindi la larghezza può essere 0.
+           Il testo a capo chiederebbe migliaia di pixel e schiaccerebbe il grafico. */
+        insight.setPreferredSize(new Dimension(0, 75));
+        insight.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, GRID), new EmptyBorder(10, 0, 0, 0)));
+        content.add(insight, BorderLayout.SOUTH);
+        add(content, BorderLayout.CENTER);
+        status.setForeground(MUTED);
+        status.setBorder(new EmptyBorder(6, 0, 0, 0));
+        add(status, BorderLayout.SOUTH);
+
+        tabs.addChangeListener((final javax.swing.event.ChangeEvent e) -> updateHints());
+        refresh.addActionListener((final ActionEvent e) -> load(true));
+        offline.addActionListener((final ActionEvent e) -> load(false));
+        apply.addActionListener((final ActionEvent e) -> calculate());
+        start.addActionListener((final ActionEvent e) -> calculate());
+        end.addActionListener((final ActionEvent e) -> calculate());
+        transform.addActionListener((final ActionEvent e) -> { updateHints(); calculate(); });
+        method.addActionListener((final ActionEvent e) -> { updateHints(); calculate(); });
+        euroSox.addActionListener((final ActionEvent e) -> { updateHints(); calculate(); });
+        xChoice.addActionListener((final ActionEvent e) -> calculate());
+        yChoice.addActionListener((final ActionEvent e) -> calculate());
+        lag.addChangeListener((final javax.swing.event.ChangeEvent e) -> { updateHints(); calculate(); });
+        window.addChangeListener((final javax.swing.event.ChangeEvent e) -> calculate());
+        export.addActionListener((final ActionEvent e) -> save(false));
+        png.addActionListener((final ActionEvent e) -> save(true));
         updateData();
+        updateHints();
+    }
+
+    static final class Sidebar extends JPanel implements Scrollable {
+        Sidebar() {
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+            setOpaque(false);
+        }
+        /* La colonna segue la larghezza disponibile; solo l'altezza scorre.
+           Altrimenti i campi data allargano la vista e tagliano le spiegazioni. */
+        public Dimension getPreferredScrollableViewportSize() { return new Dimension(285, 400); }
+        public int getScrollableUnitIncrement(final Rectangle visible, final int orientation, final int direction) { return 18; }
+        public int getScrollableBlockIncrement(final Rectangle visible, final int orientation, final int direction) { return Math.max(18, visible.height - 18); }
+        public boolean getScrollableTracksViewportWidth() { return true; }
+        public boolean getScrollableTracksViewportHeight() { return false; }
+    }
+
+    static JPanel column() {
+        final JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setOpaque(false);
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return panel;
+    }
+
+    static JTextArea paragraph(final String text, final int rows) {
+        final JTextArea area = new JTextArea(text, rows, 20);
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setOpaque(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        area.setForeground(MUTED);
+        area.setMargin(new Insets(7, 0, 5, 0));
+        area.setAlignmentX(Component.LEFT_ALIGNMENT);
+        area.setMaximumSize(new Dimension(Integer.MAX_VALUE, rows * 19 + 12));
+        return area;
+    }
+
+    static JLabel section(final String text) {
+        final JLabel heading = new JLabel(text);
+        heading.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        heading.setBorder(new EmptyBorder(15, 0, 10, 0));
+        heading.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return heading;
+    }
+
+    static JPanel field(final String title, final JComponent control) {
+        final JPanel group = column();
+        final JLabel caption = new JLabel(title);
+        caption.setLabelFor(control);
+        group.add(caption);
+        control.getAccessibleContext().setAccessibleName(title);
+        group.add(Box.createVerticalStrut(5));
+        control.setAlignmentX(Component.LEFT_ALIGNMENT);
+        control.setMinimumSize(new Dimension(0, 32));
+        control.setMaximumSize(new Dimension(Integer.MAX_VALUE, 32));
+        control.setPreferredSize(new Dimension(220, 32));
+        group.add(control);
+        group.setMinimumSize(new Dimension(0, 56));
+        group.setMaximumSize(new Dimension(Integer.MAX_VALUE, 56));
+        return group;
+    }
+
+    void updateHints() {
+        final int tab = tabs.getSelectedIndex();
+        pairControls.setVisible(tab == 2 || tab == 3);
+        rollingControls.setVisible(tab == 3);
+        insight.setVisible(tab == 2 || tab == 3);
+        png.setEnabled(tab < 4);
+        method.setEnabled(tab >= 1 && tab <= 3);
+        transformHelp.setText(transform.getSelectedIndex() == 0
+                ? "Confronta i cambiamenti mensili. Prezzo 100 → 102: +2%. Tasso 3% → 3,25%: +0,25 punti."
+                : "Usa i valori originali. Un trend comune può far apparire una correlazione: leggila con cautela.");
+        methodHelp.setText(tab == 0 ? "Usato nelle tre viste di correlazione. Non modifica le linee di questo grafico."
+                : method.getSelectedIndex() == 0 ? "Pearson misura quanto i valori seguono un legame lineare. I valori molto estremi possono influenzarlo."
+                : "Spearman confronta l'ordine dei valori: cerca un legame crescente o decrescente, anche quando non segue una retta.");
+        currencyHelp.setText(euroSox.isSelected()
+                ? "Il SOX è convertito da dollari a euro. Il suo andamento comprende quindi anche l'effetto del cambio."
+                : "Il SOX resta in dollari. Seleziona questa opzione per confrontarlo dal punto di vista di chi investe in euro.");
+        final int delay = (int) lag.getValue();
+        lagHelp.setText(delay == 0 ? "Stai confrontando i due indicatori nello stesso mese."
+                : delay > 0 ? "Il secondo indicatore è osservato " + delay + " mesi dopo il primo. Esempio con +3: X a gennaio, Y ad aprile."
+                : "Il secondo indicatore è osservato " + -delay + " mesi prima del primo. Esempio con -3: X ad aprile, Y a gennaio.");
+        pageTitle.setText(switch (tab) {
+            case 0 -> "Come si muovono gli indicatori";
+            case 1 -> "Quanto sono legati tra loro?";
+            case 2 -> "Il confronto tra due indicatori";
+            case 3 -> "Il legame cambia nel tempo?";
+            case 4 -> "I dati che stai utilizzando";
+            default -> "Fonti e dettagli dei calcoli";
+        });
+        pageHelp.setText(switch (tab) {
+            case 0 -> "Scegli le serie da mostrare. Sono riportate su una scala comune: 0 è la media del periodo. L'altezza delle linee non indica euro o percentuali.";
+            case 1 -> "Verde: movimenti concordi. Rosso: opposti. Vicino a 0: legame debole. Le celle confrontano gli stessi mesi. Passa su una cella per leggere gli indicatori o cliccala per approfondire.";
+            case 2 -> "Ogni punto è una coppia di osservazioni. Il primo indicatore è sull'asse orizzontale, il secondo su quello verticale. A sinistra puoi scegliere le serie e spostare i mesi.";
+            case 3 -> "Ogni punto usa solo i mesi della finestra scelta. La linea mostra come cambia il legame; il riepilogo in basso riguarda invece l’intero periodo. I tratti vuoti non sono calcolabili.";
+            case 4 -> "Questi sono gli ultimi valori disponibili, indipendentemente dal periodo scelto. BTP e banche sono rappresentati da ETF; seleziona una riga per i dettagli.";
+            default -> "Qui trovi la provenienza dei dati, le date dei download e le formule usate. Le correlazioni descrivono un'associazione, non dimostrano un rapporto di causa ed effetto.";
+        });
+        revalidate();
     }
 
     static JPanel row() { final JPanel row = new JPanel(); row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS)); row.setOpaque(false); return row; }
-    static JLabel label(final String text, final Color color) { final JLabel label = new JLabel("  " + text + "  "); label.setForeground(color); return label; }
-    static JButton button(final String text) { final JButton b = new JButton(text); b.setMargin(new Insets(5, 10, 5, 10)); return b; }
+    static JLabel label(final String text, final Color color) { final JLabel label = new JLabel(text); label.setForeground(color); return label; }
+    static JButton button(final String text) { final JButton b = new JButton(text); b.setMargin(new Insets(7, 12, 7, 12)); return b; }
     static String number(final double d) { return Double.isFinite(d) ? String.format(Locale.ITALY, "%.2f", d) : "n/d"; }
 
     void load(final boolean online) {
@@ -121,8 +344,8 @@ public final class MacroLab extends JPanel {
                 .isEnabled()) return;
         refresh.setEnabled(false); status.setText(online ? "Sto aggiornando i dati da BCE e Yahoo Finance…" : "Apertura dei dati salvati…");
         new SwingWorker<DataService.Dataset, Void>() {
-            @Override protected DataService.Dataset doInBackground() throws Exception { return DataService.load(directory, online); }
-            @Override protected void done() {
+            protected DataService.Dataset doInBackground() throws Exception { return DataService.load(directory, online); }
+            protected void done() {
                 /* get() consegna il risultato del worker prima di toccare la GUI.
                    NON pubblicare dataset dal thread che sta scaricando. */
                 try { dataset = get(); updateData(); calculate(); }
@@ -194,14 +417,16 @@ public final class MacroLab extends JPanel {
                 rollingPlot[0][t] = rollingPairs[t].value();
             }
             final Stats.Correlation c = pair(0, size, (int) lag.getValue());
-            insight.setText(name(xChoice.getSelectedIndex()) + " ↔ " + name(yChoice.getSelectedIndex()) + "    r = " + number(c.value()) + "    ·    n = " + c.count() + " mesi    ·    " + (c.count() < 24 ? "Campione ridotto. " : "") + "Il legame osservato non dimostra una causa.");
+            insight.setText("Intero periodo — correlazione: " + number(c.value()) + "   ·   " + c.count() + " mesi confrontabili" + (c.count() < 24 ? "   ·   Poche osservazioni" : "")
+                    + "\n" + (Double.isFinite(c.value()) ? "Da −1 (movimenti opposti) a +1 (concordi). Il risultato non dimostra una causa." : "Servono almeno tre coppie valide e due serie non costanti per calcolarla."));
             int available = 0;
             for (final DataService.Series s : dataset.series()) if (!s
                     .values()
                     .isEmpty()) available++;
-            status.setText(available + "/8 serie disponibili  ·  " + from + " → " + to + "  ·  " + (transform.getSelectedIndex() == 0 ? "Prezzi: variazioni %. Tassi e inflazione: differenze in punti percentuali." : "Livelli: trend comuni possono generare correlazioni spurie."));
+            status.setText(available + " indicatori disponibili su 8  ·  Periodo applicato: " + from + " → " + to + "  ·  Valori mancanti esclusi dai confronti");
+            periodSummary.setText("Periodo applicato: " + from + " — " + to);
             notes.setText(report()); notes.setCaretPosition(0); repaint();
-        } catch (final Exception e) { size = 0; insight.setText("Parametri non validi: correggi il periodo e premi Applica."); status.setText("Controlla i parametri: " + e.getMessage()); repaint(); }
+        } catch (final Exception e) { size = 0; periodSummary.setText("Periodo non valido"); insight.setText("Parametri non validi: correggi il periodo e premi Applica."); status.setText("Controlla i parametri: " + e.getMessage()); repaint(); }
     }
 
     String name(final int index) { return DataService.SOURCES[index].shortName() + (index == 3 ? (euroSox.isSelected() ? " EUR" : " USD") : ""); }
@@ -227,28 +452,54 @@ public final class MacroLab extends JPanel {
         if (size == 0) { status.setText("Carica i dati prima di esportare."); return; }
         final JFileChooser chooser = new JFileChooser(); chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         if (chooser
-                .showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+                .showSaveDialog(this)
+                != JFileChooser.APPROVE_OPTION)
+            return;
         try {
             final Path folder = chooser.getSelectedFile().toPath();
             if (image) {
                 final Component component = tabs.getSelectedComponent();
-                final BufferedImage picture = new BufferedImage(component.getWidth(), component.getHeight(), BufferedImage.TYPE_INT_RGB);
-                final Graphics2D graphics = picture.createGraphics(); component.paint(graphics); graphics.dispose();
-                ImageIO.write(picture, "png", folder.resolve("macrolab-grafico-" + System.currentTimeMillis() + ".png").toFile());
+                final BufferedImage picture = new BufferedImage(
+                        component.getWidth(),
+                        component.getHeight(),
+                        BufferedImage.TYPE_INT_RGB);
+                final Graphics2D graphics = picture.createGraphics();
+                component.paint(graphics);
+                graphics.dispose();
+                ImageIO.write(picture,
+                        "png", folder.resolve("macrolab-grafico-"
+                                        + System.currentTimeMillis()
+                                        + ".png")
+                                .toFile());
             } else export(folder);
             status.setText("Esportazione completata in " + folder);
-        } catch (final Exception e) { status.setText("Esportazione fallita: " + e.getMessage()); }
+        } catch (final Exception e) {
+            status.setText("Esportazione fallita: " + e.getMessage());
+        }
     }
 
     void export(final Path folder) throws Exception {
         final String suffix = "-" + System.currentTimeMillis();
         for (int kind = 0; kind < 2; kind++) {
             final StringBuilder csv = new StringBuilder("month");
-            for (int i = 0; i < DataService.SOURCES.length; i++) csv.append(',').append(DataService.SOURCES[i].id()).append(i == 3 && euroSox.isSelected() ? "_eur" : "");
+            for (int i = 0; i < DataService.SOURCES.length; i++)
+                csv.append(',')
+                        .append(DataService.SOURCES[i].id())
+                        .append(i == 3
+                                && euroSox
+                                .isSelected()
+                                ? "_eur"
+                                : "");
             csv.append('\n');
             for (int t = 0; t < size; t++) {
                 csv.append(first.plusMonths(t));
-                for (final double[] series : kind == 0 ? levels : analysis) { csv.append(','); if (Double.isFinite(series[t])) csv.append(series[t]); }
+                for (final double[] series : kind == 0
+                        ? levels
+                        : analysis) {
+                    csv.append(',');
+                    if (Double.isFinite(series[t]))
+                        csv.append(series[t]);
+                }
                 csv.append('\n');
             }
             Files.writeString(folder.resolve((kind == 0 ? "livelli" : "analisi") + suffix + ".csv"), csv);
@@ -268,7 +519,8 @@ public final class MacroLab extends JPanel {
             this.kind = kind; setBackground(PANEL); setPreferredSize(new Dimension(1120, 430));
             ToolTipManager.sharedInstance().registerComponent(this);
             if (kind == 1) addMouseListener(new MouseAdapter() {
-                @Override public void mouseClicked(final MouseEvent e) {
+                public void mouseClicked(final MouseEvent e) {
+                    if (size == 0) return;
                     final int cell;
                     if ((cell = Math.min((getWidth() - 180) / 8, (getHeight() - 96) / 8)) <= 0) return;
                     /* Coordinate acquisite prima dei controlli: preservo l'ordine
@@ -283,7 +535,7 @@ public final class MacroLab extends JPanel {
                 }
             });
         }
-        @Override public String getToolTipText(final MouseEvent e) {
+        public String getToolTipText(final MouseEvent e) {
             if (size == 0) return null;
             if (kind == 1) {
                 final int cell;
@@ -298,7 +550,7 @@ public final class MacroLab extends JPanel {
                         .getY() - 64) / cell) >= 8
                         || x >= 8) return null;
                 final Stats.Correlation c = correlations[x][y];
-                return name(x) + " / " + name(y) + " : r=" + number(c.value()) + ", n=" + c.count() + ". Clicca per confrontare.";
+                return "<html>" + DataService.SOURCES[x].name() + " / " + DataService.SOURCES[y].name() + "<br>Correlazione: " + number(c.value()) + " · Mesi confrontabili: " + c.count() + "<br>Clicca per aprire il confronto.</html>";
             }
             final int t = Math.max(0, Math.min(size - 1, (int) Math.round((e.getX() - 72.0) * (size - 1) / (getWidth() - 104))));
             if (kind == 3) {
@@ -313,12 +565,12 @@ public final class MacroLab extends JPanel {
                     .isSelected()) tip.append("<br>").append(name(i)).append(": ").append(number(levels[i][t])).append(" · analisi ").append(number(analysis[i][t]));
             return tip.append("</html>").toString();
         }
-        @Override protected void paintComponent(final Graphics graphics) {
+        protected void paintComponent(final Graphics graphics) {
             super.paintComponent(graphics);
             final Graphics2D g = (Graphics2D) graphics.create();
             try {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+                g.setFont(new Font("Segoe UI", Font.PLAIN, 13));
                 g.setColor(MUTED);
                 if (size == 0) { g.drawString("Scarica i dati online per esplorare i mercati.", 40, 65); return; }
                 if (kind == 1) { heatmap(g); return; }
@@ -340,7 +592,7 @@ public final class MacroLab extends JPanel {
                     final double pad = (max - min) * 0.08; min -= pad; max += pad;
                 }
                 axes(g, left, top, width, height, min, max);
-                g.setColor(INK); g.drawString(kind == 3 ? "Correlazione nel tempo  —  " + method.getSelectedItem() + "  ·  finestra " + window.getValue() + " mesi  ·  ritardo Y " + lag.getValue() : "Serie su scala comune (z-score)  —  " + transform.getSelectedItem(), left, 28);
+                g.setColor(INK); g.drawString(kind == 3 ? "Correlazione su " + window.getValue() + " mesi  ·  " + method.getSelectedItem() : "Scostamento dalla media  ·  " + transform.getSelectedItem(), left, 28);
                 for (int i = 0; i < values.length; i++) {
                     if (kind == 0
                             && !visible[i]
@@ -356,7 +608,7 @@ public final class MacroLab extends JPanel {
                 }
                 g.setColor(MUTED);
                 for (int i = 0; i <= 4; i++) g.drawString(first.plusMonths((size - 1L) * i / 4).toString(), left + width * i / 4 - 20, top + height + 24);
-                g.drawString(kind == 3 ? "Passa sul grafico per r e numerosità. Le finestre incomplete non vengono tracciate." : "Media = 0 · deviazione standard = 1. Passa sul grafico per valori originali e trasformati.", left, getHeight() - 10);
+                g.drawString(kind == 3 ? "Passa sulla linea per leggere correlazione e numero di mesi." : "Scala comune: 1 = una deviazione standard; non è un rendimento.", left, getHeight() - 10);
             } finally { g.dispose(); }
         }
         void axes(final Graphics2D g, final int left, final int top, final int width, final int height, final double min, final double max) {
@@ -369,9 +621,9 @@ public final class MacroLab extends JPanel {
         void heatmap(final Graphics2D g) {
             final int cell;
             if ((cell = Math.min((getWidth() - 180) / 8, (getHeight() - 96) / 8)) < 10) return;
-            g.setColor(INK); g.drawString("Correlazioni  —  " + method.getSelectedItem() + "  ·  ritardo zero  ·  clicca una cella per confrontare", 26, 26);
+            g.setColor(INK); g.drawString(method.getSelectedItem() + "  ·  stesso mese  ·  n = mesi confrontabili", 26, 26);
             for (int i = 0; i < 8; i++) {
-                g.setColor(MUTED); g.drawString(name(i), 16, 64 + i * cell + cell / 2); g.drawString(MATRIX_NAMES[i], 142 + i * cell, 52);
+                g.setColor(MUTED); g.drawString(name(i), 16, 64 + i * cell + cell / 2); g.setFont(new Font("Segoe UI", Font.PLAIN, 11)); g.drawString(MATRIX_NAMES[i], 142 + i * cell, 52); g.setFont(new Font("Segoe UI", Font.PLAIN, 13));
                 for (int j = 0; j < 8; j++) {
                     final Stats.Correlation c = correlations[j][i];
                     final double strength = Double.isFinite(c.value()) ? Math.abs(c.value()) : 0;
@@ -379,7 +631,7 @@ public final class MacroLab extends JPanel {
                     g.setColor(new Color((int) (PANEL.getRed() * (1 - strength) + target.getRed() * strength), (int) (PANEL.getGreen() * (1 - strength) + target.getGreen() * strength), (int) (PANEL.getBlue() * (1 - strength) + target.getBlue() * strength)));
                     g.fillRect(142 + j * cell, 64 + i * cell, cell - 2, cell - 2); g.setColor(INK);
                     g.drawString(number(c.value()), 148 + j * cell, 64 + i * cell + cell / 2);
-                    if (cell >= 40) { g.setFont(new Font("Segoe UI", Font.PLAIN, 10)); g.drawString("n " + c.count(), 148 + j * cell, 78 + i * cell + cell / 2); g.setFont(new Font("Segoe UI", Font.PLAIN, 12)); }
+                    if (cell >= 40) { g.setFont(new Font("Segoe UI", Font.PLAIN, 10)); g.drawString("n " + c.count(), 148 + j * cell, 78 + i * cell + cell / 2); g.setFont(new Font("Segoe UI", Font.PLAIN, 13)); }
                 }
             }
             final int lx;
@@ -401,7 +653,7 @@ public final class MacroLab extends JPanel {
                         && Double.isFinite(x[t])
                         && Double.isFinite(y[j])) { xmin = Math.min(xmin, x[t]); xmax = Math.max(xmax, x[t]); ymin = Math.min(ymin, y[j]); ymax = Math.max(ymax, y[j]); }
             }
-            g.setColor(INK); g.drawString(name(xChoice.getSelectedIndex()) + " [X]  /  " + name(yChoice.getSelectedIndex()) + " [Y]  ·  X[t] con Y[t" + (delay >= 0 ? "+" : "") + delay + "]", left, 28);
+            g.setColor(INK); g.drawString(name(xChoice.getSelectedIndex()) + " (X) e " + name(yChoice.getSelectedIndex()) + " (Y)", left, 28);
             if (!Double.isFinite(xmin)) { g.drawString("Nessuna coppia disponibile.", left, top); return; }
             if (xmin == xmax) { xmin--; xmax++; } if (ymin == ymax) { ymin--; ymax++; }
             final double padx = (xmax - xmin) * 0.08, pady = (ymax - ymin) * 0.08; xmin -= padx; xmax += padx; ymin -= pady; ymax += pady;
@@ -416,7 +668,7 @@ public final class MacroLab extends JPanel {
             }
             g.setColor(MUTED);
             for (int i = 0; i <= 4; i++) g.drawString(number(xmin + (xmax - xmin) * i / 4), left + i * width / 4 - 12, top + height + 24);
-            g.drawString("X: " + unit(xChoice.getSelectedIndex()) + "   ·   Y: " + unit(yChoice.getSelectedIndex()) + "   ·   Ogni punto è una coppia mensile; ritardo positivo = X precede Y.", left, getHeight() - 10);
+            g.drawString("X: " + unit(xChoice.getSelectedIndex()) + "   ·   Y: " + unit(yChoice.getSelectedIndex()) + "", left, getHeight() - 10);
         }
     }
     String unit(final int index) { return transform.getSelectedIndex() == 0 ? (DataService.SOURCES[index].rate() ? "punti percentuali" : "variazione %") : (index == 3 && euroSox.isSelected() ? "punti convertiti EUR" : DataService.SOURCES[index].unit()); }
@@ -444,7 +696,7 @@ public final class MacroLab extends JPanel {
         }
         SwingUtilities.invokeLater(() -> {
             theme(); final JFrame frame = new JFrame("Analisi dei mercati"); final MacroLab app = new MacroLab(data);
-            frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE); frame.setContentPane(app); final Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds(); frame.setSize(Math.min(1240, screen.width), Math.min(800, screen.height)); frame.setMinimumSize(new Dimension(Math.min(1000, screen.width), Math.min(650, screen.height))); frame.setLocationRelativeTo(null); frame.setVisible(true); app.load(true);
+            frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE); frame.setContentPane(app); final Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds(); frame.setSize(Math.min(1360, screen.width), Math.min(900, screen.height)); frame.setMinimumSize(new Dimension(Math.min(1000, screen.width), Math.min(650, screen.height))); frame.setLocationRelativeTo(null); frame.setVisible(true); app.load(true);
         });
     }
 }

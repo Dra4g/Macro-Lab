@@ -207,7 +207,9 @@ public final class DataService {
         try {
             final TreeMap<YearMonth, Double> values = new TreeMap<>();
             for (final List<String> row : Formats.csv(Files.readString(cache))) {
-                if (!row.getFirst().equals("month"))
+                if (!row
+                        .getFirst()
+                        .equals("month"))
                     values.put(YearMonth.parse(row.getFirst()), Double.valueOf(row.get(1)));
             }
             final List<String> metadata = Files.readAllLines(directory.resolve(source.id + ".meta"));
@@ -277,7 +279,8 @@ public final class DataService {
     static TreeMap<YearMonth, Double> yahoo(final String text) throws IOException {
         final Map<?, ?> chart = Formats.object(Formats.object(Formats.json(text)).get("chart"));
         final Object error;
-        if ((error = chart.get("error")) != null)
+        if ((error = chart
+                .get("error")) != null)
             throw new IOException("Yahoo: " + error);
         final List<?> results;
         if ((results = Formats.array(chart
@@ -307,8 +310,10 @@ public final class DataService {
                     .get(i) instanceof final Number timestamp
                     && closes
                     .get(i) instanceof final Number close
-                    && Double.isFinite(close.doubleValue())
-                    && close.doubleValue() > 0) {
+                    && Double.isFinite(close
+                    .doubleValue())
+                    && close
+                    .doubleValue() > 0) {
                 values.put(YearMonth.from(Instant
                         .ofEpochSecond(timestamp.longValue())
                         .atZone(zone)),
