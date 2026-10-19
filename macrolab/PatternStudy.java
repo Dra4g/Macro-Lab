@@ -7,6 +7,20 @@ public final class PatternStudy {
     private PatternStudy() {}
 
     public static final int[] MARKETS = {4, 0, 5};
+    public enum Kind {
+        DISINFLATION_REBOUND("Calo HICP → discesa e recupero", -1, true),
+        INFLATION_SELLOFF("Salita HICP → discesa mercati", 1, false);
+
+        final String label;
+        final int direction;
+        final boolean recoveryRequired;
+        Kind(final String label, final int direction, final boolean recoveryRequired) {
+            this.label = label;
+            this.direction = direction;
+            this.recoveryRequired = recoveryRequired;
+        }
+        public String toString() { return label; }
+    }
     public enum Outcome {
         CONFIRMED("Confermato"),
         REJECTED("Non confermato"),
@@ -26,9 +40,15 @@ public final class PatternStudy {
                         int declineMonths,
                         double marketDrop,
                         int recoveryMonths,
-                        double rebound) {
+                        double rebound,
+                        Kind kind) {
+        public Rules(final int inflationMonths, final double inflationDrop, final int declineMonths,
+                     final double marketDrop, final int recoveryMonths, final double rebound) {
+            this(inflationMonths, inflationDrop, declineMonths, marketDrop, recoveryMonths, rebound, Kind.DISINFLATION_REBOUND);
+        }
         public Rules {
-            if (inflationMonths < 1
+            if (kind == null
+                    || inflationMonths < 1
                     || declineMonths < 0
                     || recoveryMonths < 1
                     || !Double.isFinite(inflationDrop)
@@ -40,10 +60,14 @@ public final class PatternStudy {
                     || rebound <= 0)
                 throw new IllegalArgumentException("Soglie del pattern non valide");
         }
+
+        public int horizonMonths() { return declineMonths + (kind.recoveryRequired ? recoveryMonths : 0); }
     }
 
     public record Leg(int market, int trough, int recovery, double fall, double bounce, Outcome outcome) {}
-    public record Event(int start, int signal, double inflationFall, List<Leg> legs, Outcome outcome) {}
+    public record Event(int start, int signal, double inflationFall, List<Leg> legs, Outcome outcome, Kind kind) {
+        public double inflationChange() { return kind.direction * inflationFall; }
+    }
 
     public static List<Event> detect(final double[][] levels,
                                      final Rules rules) {
@@ -62,10 +86,10 @@ public final class PatternStudy {
                 if (!Double.isFinite(inflation[m])) { valid = false; break; }
             }
             if (!valid) { episode = false; continue; }
-            /* 4.0% -> 2.5% = -1.5 PUNTI, non -1.5%.
+            /* 4.0% -> 2.5% = -1.5 PUNTI; 2.5% -> 4.0% = +1.5 PUNTI.
                Una sola soglia attraversata per episodio contiguo; il segnale è
                il primo mese che la raggiunge. NON scegliere a posteriori il più bello. */
-            final double fall = inflation[start] - inflation[t];
+            final double fall = rules.kind().direction * (inflation[t] - inflation[start]);
             if (fall < rules.inflationDrop()) { episode = false; continue; }
             if (episode) continue;
             episode = true;
@@ -79,7 +103,7 @@ public final class PatternStudy {
                 rejected |= leg.outcome() == Outcome.REJECTED;
             }
             events.add(new Event(start, t, fall, List.copyOf(legs),
-                    rejected ? Outcome.REJECTED : missing ? Outcome.MISSING : pending ? Outcome.PENDING : Outcome.CONFIRMED));
+                    rejected ? Outcome.REJECTED : missing ? Outcome.MISSING : pending ? Outcome.PENDING : Outcome.CONFIRMED, rules.kind()));
         }
         return List.copyOf(events);
     }
@@ -90,7 +114,7 @@ public final class PatternStudy {
                         final int signal,
                         final Rules rules) {
         final int declineEnd = signal + rules.declineMonths();
-        final int horizon = declineEnd + rules.recoveryMonths();
+        final int horizon = signal + rules.horizonMonths();
         /* La stessa finestra completa è richiesta anche per gli insuccessi.
            Nessuno zero al posto dei buchi. Se manca la coda, il caso resta aperto;
            un buco interno non diventa un falso crollo o una falsa ripresa. */
@@ -104,19 +128,22 @@ public final class PatternStudy {
             if (prices[t] < prices[trough]) trough = t;
         }
         int recovery = -1;
-        double bounce = 0;
-        for (int t = trough + 1; t <= Math.min(trough + rules.recoveryMonths(), prices.length - 1); t++) {
-            bounce = Math.max(bounce, 100 * (prices[t] / prices[trough] - 1));
-            if (recovery < 0
-                    && 100 * (prices[t] / prices[trough] - 1)
-                    >= rules.rebound()) recovery = t;
+        double bounce = Double.NaN;
+        if (rules.kind().recoveryRequired) {
+            bounce = 0;
+            for (int t = trough + 1; t <= Math.min(trough + rules.recoveryMonths(), prices.length - 1); t++) {
+                bounce = Math.max(bounce, 100 * (prices[t] / prices[trough] - 1));
+                if (recovery < 0
+                        && 100 * (prices[t] / prices[trough] - 1)
+                        >= rules.rebound()) recovery = t;
+            }
         }
         final double fall = 100 * (prices[trough] / prices[start] - 1);
         return new Leg(market, trough, recovery, fall, bounce,
                 horizon >= prices.length
                         ? Outcome.PENDING
                         : fall <= -rules.marketDrop()
-                        && recovery >= 0
+                        && (!rules.kind().recoveryRequired || recovery >= 0)
                         ? Outcome.CONFIRMED
                         : Outcome.REJECTED);
     }

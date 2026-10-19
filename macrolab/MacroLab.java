@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Locale;
 import java.util.List;
 import java.util.Properties;
+import java.util.EnumMap;
 import java.io.Reader;
 import java.io.Writer;
 import javax.imageio.ImageIO;
@@ -25,9 +26,14 @@ public final class MacroLab extends JPanel {
     final Properties appearance = new Properties();
     final Color[] seriesColors = new Color[DataService.SOURCES.length];
     final JButton[] colorButtons = new JButton[DataService.SOURCES.length];
-    Color inflationColor = new Color(183, 137, 58), declineColor = new Color(164, 76, 60), recoveryColor = new Color(58, 119, 94);
+    Color inflationColor = new Color(183, 137, 58), declineColor = new Color(164, 76, 60), recoveryColor = new Color(58, 119, 94), inflationRiseColor = new Color(115, 88, 151);
     final JCheckBox showPatterns = new JCheckBox("Mostra le bande del pattern", true);
     final JPanel patternControls = column();
+    final JComboBox<PatternStudy.Kind> patternKind = new JComboBox<>(PatternStudy.Kind.values());
+    final EnumMap<PatternStudy.Kind, PatternStudy.Rules> patternRules = new EnumMap<>(PatternStudy.Kind.class);
+    final JTextArea patternHelp = paragraph("", 4);
+    PatternStudy.Kind displayedPattern = PatternStudy.Kind.DISINFLATION_REBOUND;
+    boolean switchingPattern;
     final JSpinner inflationMonths = new JSpinner(new SpinnerNumberModel(3, 1, 24, 1));
     final JSpinner inflationDrop = new JSpinner(new SpinnerNumberModel(1.5, 0.1, 15.0, 0.1));
     final JSpinner declineMonths = new JSpinner(new SpinnerNumberModel(3, 0, 24, 1));
@@ -35,7 +41,7 @@ public final class MacroLab extends JPanel {
     final JSpinner recoveryMonths = new JSpinner(new SpinnerNumberModel(6, 1, 36, 1));
     final JSpinner rebound = new JSpinner(new SpinnerNumberModel(3.0, 0.1, 100.0, 0.5));
     final JTextArea patternSummary = paragraph("", 3), eventDetails = paragraph("Seleziona un episodio per leggere minimi, recuperi e date di verifica.", 5);
-    final DefaultTableModel patternRows = new DefaultTableModel(new String[]{"Segnale", "Calo HICP (pp)", "EUR/USD", "BTP ETF", "EURO 50", "Esito", "Verifica entro"}, 0) {
+    final DefaultTableModel patternRows = new DefaultTableModel(new String[]{"Segnale", "Δ HICP (pp)", "EUR/USD", "BTP ETF", "EURO 50", "Esito", "Verifica entro"}, 0) {
         public boolean isCellEditable(final int row, final int column) { return false; }
     };
     List<PatternStudy.Event> events = List.of();
@@ -79,20 +85,22 @@ public final class MacroLab extends JPanel {
 
     public MacroLab(final Path directory) {
         this.directory = directory;
+        for (final PatternStudy.Kind kind : PatternStudy.Kind.values()) patternRules.put(kind, new PatternStudy.Rules(3, 1.5, 3, 3, 6, 3, kind));
         try (final Reader reader = Files.newBufferedReader(directory.resolve("appearance.properties"))) {
             appearance.load(reader);
         } catch (final java.io.IOException ignored) { /* Prima apertura: palette predefinita. */ }
-        for (int i = 0; i < seriesColors.length + 3; i++) {
+        for (int i = 0; i < seriesColors.length + 4; i++) {
             Color color;
             try {
                 color = new Color(Integer.parseInt(appearance.getProperty("color." + i)));
             } catch (final RuntimeException ignored) {
-                color = i < seriesColors.length ? DataService.SOURCES[i].color() : i == seriesColors.length ? inflationColor : i == seriesColors.length + 1 ? declineColor : recoveryColor;
+                color = i < seriesColors.length ? DataService.SOURCES[i].color() : i == seriesColors.length ? inflationColor : i == seriesColors.length + 1 ? declineColor : i == seriesColors.length + 2 ? recoveryColor : inflationRiseColor;
             }
             if (i < seriesColors.length) seriesColors[i] = color;
             else if (i == seriesColors.length) inflationColor = color;
             else if (i == seriesColors.length + 1) declineColor = color;
-            else recoveryColor = color;
+            else if (i == seriesColors.length + 2) recoveryColor = color;
+            else inflationRiseColor = color;
         }
         transform.setSelectedIndex(1);
         setLayout(new BorderLayout(18, 14));
@@ -158,11 +166,12 @@ public final class MacroLab extends JPanel {
         }
         settings.add(Box.createVerticalStrut(6));
         settings.add(presets);
-        patternControls.add(section("Inflazione · discesa · recupero"));
+        patternControls.add(section("Pattern di inflazione e mercati"));
+        patternControls.add(field("Pattern da analizzare", patternKind));
         showPatterns.setOpaque(false);
         showPatterns.addActionListener((final ActionEvent e) -> overview.repaint());
         patternControls.add(showPatterns);
-        patternControls.add(paragraph("Bande: ocra = calo HICP; rosso e verde = discesa e recupero nei tre mercati, solo se confermati.", 4));
+        patternControls.add(patternHelp);
         final JButton study = button("Apri lo studio degli episodi");
         study.addActionListener((final ActionEvent e) -> tabs.setSelectedIndex(6));
         patternControls.add(study);
@@ -173,26 +182,28 @@ public final class MacroLab extends JPanel {
         final JPanel options = column();
         options.setVisible(false);
         configure.addActionListener((final ActionEvent e) -> { options.setVisible(configure.isSelected()); revalidate(); });
-        options.add(field("Calo HICP: finestra in mesi", inflationMonths));
-        options.add(field("Calo minimo HICP (punti %)", inflationDrop));
+        options.add(field("Variazione HICP: finestra in mesi", inflationMonths));
+        options.add(field("Variazione minima HICP (punti %)", inflationDrop));
         options.add(field("Discesa: mesi dopo il segnale", declineMonths));
         options.add(field("Calo minimo di ogni mercato (%)", marketDrop));
         options.add(field("Recupero: mesi dal minimo", recoveryMonths));
         options.add(field("Rialzo minimo dal minimo (%)", rebound));
         options.add(paragraph("Confronto storico sui livelli. Il segnale è datato al mese HICP; la conferma richiede dati successivi.", 4));
-        final JPanel bandColors = row();
+        final JPanel bandColors = new JPanel(new GridLayout(2, 2, 6, 6));
+        bandColors.setOpaque(false);
         bandColors.setAlignmentX(Component.LEFT_ALIGNMENT);
-        bandColors.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
-        for (int i = 0; i < 3; i++) {
+        bandColors.setMaximumSize(new Dimension(Integer.MAX_VALUE, 74));
+        for (int i = 0; i < 4; i++) {
             final int band = i;
-            final JButton color = button(new String[]{"HICP", "Discesa", "Recupero"}[i]);
-            color.setForeground(i == 0 ? inflationColor : i == 1 ? declineColor : recoveryColor);
+            final JButton color = button(new String[]{"Calo HICP", "Discesa", "Recupero", "Salita HICP"}[i]);
+            color.setForeground(i == 0 ? inflationColor : i == 1 ? declineColor : i == 2 ? recoveryColor : inflationRiseColor);
             color.addActionListener((final ActionEvent e) -> {
                 final Color chosen;
-                if ((chosen = JColorChooser.showDialog(this, "Colore della banda", band == 0 ? inflationColor : band == 1 ? declineColor : recoveryColor)) != null) {
+                if ((chosen = JColorChooser.showDialog(this, "Colore della banda", band == 0 ? inflationColor : band == 1 ? declineColor : band == 2 ? recoveryColor : inflationRiseColor)) != null) {
                     if (band == 0) inflationColor = chosen;
                     else if (band == 1) declineColor = chosen;
-                    else recoveryColor = chosen;
+                    else if (band == 2) recoveryColor = chosen;
+                    else inflationRiseColor = chosen;
                     color.setForeground(chosen);
                     saveAppearance();
                     overview.repaint();
@@ -203,6 +214,7 @@ public final class MacroLab extends JPanel {
         options.add(bandColors);
         patternControls.add(options);
         settings.add(patternControls);
+        patternKind.addActionListener((final ActionEvent e) -> selectPattern());
         for (final JSpinner control : new JSpinner[]{inflationMonths, inflationDrop, declineMonths, marketDrop, recoveryMonths, rebound}) {
             control.addChangeListener((final javax.swing.event.ChangeEvent e) -> calculate());
         }
@@ -373,7 +385,7 @@ public final class MacroLab extends JPanel {
             final YearMonth currentEnd = first.plusMonths(size - 1);
             final YearMonth focusStart = studyFirst.plusMonths(event.start()).minusMonths(3);
             start.setText((focusStart.isBefore(YearMonth.of(2000, 1)) ? YearMonth.of(2000, 1) : focusStart).toString());
-            final YearMonth focusEnd = studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths() + 3);
+            final YearMonth focusEnd = studyFirst.plusMonths(event.signal() + appliedRules.horizonMonths() + 3);
             end.setText((focusEnd.isAfter(currentEnd) ? currentEnd : focusEnd).toString());
             transform.setSelectedIndex(1);
             for (int i = 0; i < visible.length; i++) visible[i].setSelected(i == 0 || i == 2 || i == 4 || i == 5);
@@ -496,8 +508,37 @@ public final class MacroLab extends JPanel {
         return group;
     }
 
+    void selectPattern() {
+        patternRules.put(displayedPattern, currentPatternRules(displayedPattern));
+        final PatternStudy.Rules next = patternRules.get((PatternStudy.Kind) patternKind.getSelectedItem());
+        displayedPattern = next.kind();
+        switchingPattern = true;
+        try {
+            inflationMonths.setValue(next.inflationMonths());
+            inflationDrop.setValue(next.inflationDrop());
+            declineMonths.setValue(next.declineMonths());
+            marketDrop.setValue(next.marketDrop());
+            recoveryMonths.setValue(next.recoveryMonths());
+            rebound.setValue(next.rebound());
+        } finally { switchingPattern = false; }
+        updateHints();
+        calculate();
+    }
+
+    PatternStudy.Rules currentPatternRules(final PatternStudy.Kind kind) {
+        return new PatternStudy.Rules((int) inflationMonths.getValue(), ((Number) inflationDrop.getValue()).doubleValue(),
+                (int) declineMonths.getValue(), ((Number) marketDrop.getValue()).doubleValue(),
+                (int) recoveryMonths.getValue(), ((Number) rebound.getValue()).doubleValue(), kind);
+    }
+
     void updateHints() {
         final int tab = tabs.getSelectedIndex();
+        final boolean recoveryRequired = patternKind.getSelectedItem() == PatternStudy.Kind.DISINFLATION_REBOUND;
+        recoveryMonths.setEnabled(recoveryRequired);
+        rebound.setEnabled(recoveryRequired);
+        patternHelp.setText(recoveryRequired
+                ? "Banda ocra: calo HICP. Barre rosse e verdi: discesa e recupero dei tre mercati, solo nei casi confermati."
+                : "Banda viola: salita HICP. Barre rosse: discesa dei tre mercati nei casi confermati. Nessun recupero richiesto.");
         pairControls.setVisible(tab == 2 || tab == 3);
         rollingControls.setVisible(tab == 3);
         insight.setVisible(tab == 2 || tab == 3);
@@ -532,7 +573,9 @@ public final class MacroLab extends JPanel {
             case 2 -> "Ogni punto è una coppia di osservazioni. Il primo indicatore è sull'asse orizzontale, il secondo su quello verticale. A sinistra puoi scegliere le serie e spostare i mesi.";
             case 3 -> "Ogni punto usa solo i mesi della finestra scelta. La linea mostra come cambia il legame; il riepilogo in basso riguarda invece l’intero periodo. I tratti vuoti non sono calcolabili.";
             case 4 -> "Ultimi valori disponibili, indipendenti dal filtro. La copertura indica lo storico realmente scaricato: nessuna ricostruzione prima dell’avvio degli ETF.";
-            case 6 -> "Tutti i cali HICP che attraversano la soglia, inclusi i casi senza il pattern. Confermato solo se EUR/USD, ETF BTP Italia ed EURO STOXX 50 scendono e poi recuperano secondo le regole scelte.";
+            case 6 -> recoveryRequired
+                    ? "Calo HICP: tutti gli attraversamenti di soglia, inclusi gli insuccessi. Conferma se EUR/USD, ETF BTP Italia ed EURO STOXX 50 scendono e poi recuperano."
+                    : "Salita HICP: tutti gli attraversamenti di soglia, inclusi gli insuccessi. Conferma se EUR/USD, ETF BTP Italia ed EURO STOXX 50 scendono nella finestra scelta. I minimi possono cadere in mesi diversi.";
             default -> "Qui trovi la provenienza dei dati, le date dei download e le formule usate. Le correlazioni descrivono un'associazione, non dimostrano un rapporto di causa ed effetto.";
         });
         revalidate();
@@ -588,7 +631,7 @@ public final class MacroLab extends JPanel {
     }
 
     void calculate() {
-        if (dataset == null) return;
+        if (dataset == null || switchingPattern) return;
         try {
             final YearMonth from = YearMonth.parse(start.getText().trim()), to = YearMonth.parse(end.getText().trim());
             final long count;
@@ -608,7 +651,8 @@ public final class MacroLab extends JPanel {
                 analysis[i] = transform.getSelectedIndex() == 0 ? Arrays.copyOfRange(Stats.changes(extended[i], DataService.SOURCES[i].rate()), 1, extended[i].length) : levels[i];
                 z[i] = Stats.standardize(analysis[i]);
             }
-            appliedRules = new PatternStudy.Rules((int) inflationMonths.getValue(), ((Number) inflationDrop.getValue()).doubleValue(), (int) declineMonths.getValue(), ((Number) marketDrop.getValue()).doubleValue(), (int) recoveryMonths.getValue(), ((Number) rebound.getValue()).doubleValue());
+            appliedRules = currentPatternRules(displayedPattern);
+            patternRules.put(appliedRules.kind(), appliedRules);
             /* Rilevamento su tutto lo storico fino al limite scelto. Cambiare il
                bordo sinistro non sposta i segnali e non cancella il loro contesto. */
             events = PatternStudy.detect(dataset.align(studyFirst, to, false), appliedRules).stream()
@@ -653,8 +697,8 @@ public final class MacroLab extends JPanel {
     Stats.Correlation pair(final int from, final int to, final int delay) { return Stats.correlate(analysis[xChoice.getSelectedIndex()], analysis[yChoice.getSelectedIndex()], from, to, delay, method.getSelectedIndex() == 1); }
 
     void saveAppearance() {
-        for (int i = 0; i < seriesColors.length + 3; i++) appearance.setProperty("color." + i,
-                Integer.toString((i < seriesColors.length ? seriesColors[i] : i == seriesColors.length ? inflationColor : i == seriesColors.length + 1 ? declineColor : recoveryColor).getRGB()));
+        for (int i = 0; i < seriesColors.length + 4; i++) appearance.setProperty("color." + i,
+                Integer.toString((i < seriesColors.length ? seriesColors[i] : i == seriesColors.length ? inflationColor : i == seriesColors.length + 1 ? declineColor : i == seriesColors.length + 2 ? recoveryColor : inflationRiseColor).getRGB()));
         try {
             Files.createDirectories(directory);
             try (final Writer writer = Files.newBufferedWriter(directory.resolve("appearance.properties"))) {
@@ -665,7 +709,7 @@ public final class MacroLab extends JPanel {
 
     void updatePatterns() {
         patternRows.setRowCount(0);
-        eventDetails.setText("Seleziona un episodio per leggere minimi, recuperi e date di verifica. Le percentuali in tabella sono le discese dai livelli iniziali.");
+        eventDetails.setText("Seleziona un episodio per leggere minimi e date di verifica. Le percentuali sono le discese dai livelli iniziali; i minimi possono cadere in mesi diversi.");
         int confirmed = 0, rejected = 0, missing = 0, pending = 0;
         for (final PatternStudy.Event event : events) {
             switch (event.outcome()) {
@@ -676,13 +720,13 @@ public final class MacroLab extends JPanel {
             }
             final Object[] row = new Object[7];
             row[0] = studyFirst.plusMonths(event.signal());
-            row[1] = "−" + number(event.inflationFall());
+            row[1] = (event.inflationChange() > 0 ? "+" : "") + number(event.inflationChange());
             for (int i = 0; i < event.legs().size(); i++) row[2 + i] = Double.isFinite(event.legs().get(i).fall()) ? number(event.legs().get(i).fall()) + "%" : "n/d";
             row[5] = event.outcome();
-            row[6] = studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths());
+            row[6] = studyFirst.plusMonths(event.signal() + appliedRules.horizonMonths());
             patternRows.addRow(row);
         }
-        patternSummary.setText(events.size() + " episodi  /  " + confirmed + " confermati su " + (confirmed + rejected) + " valutabili"
+        patternSummary.setText((appliedRules.kind().recoveryRequired ? "Calo HICP" : "Salita HICP") + " · " + events.size() + " episodi  /  " + confirmed + " confermati su " + (confirmed + rejected) + " valutabili"
                 + (confirmed + rejected > 0 ? " (" + number(100.0 * confirmed / (confirmed + rejected)) + "%)" : "")
                 + "\n" + rejected + " non confermati · " + pending + " in attesa · " + missing + " con dati insufficienti. "
                 + "Frequenza descrittiva, senza test statistico; episodi eventualmente sovrapposti.");
@@ -690,31 +734,39 @@ public final class MacroLab extends JPanel {
 
     String eventText(final PatternStudy.Event event) {
         final StringBuilder text = new StringBuilder("Segnale ").append(studyFirst.plusMonths(event.signal()))
-                .append(" · HICP −").append(number(event.inflationFall())).append(" pp dal ").append(studyFirst.plusMonths(event.start()))
+                .append(" · ").append(event.kind()).append(" · HICP ").append(event.inflationChange() > 0 ? "+" : "").append(number(event.inflationChange())).append(" pp dal ").append(studyFirst.plusMonths(event.start()))
                 .append(" · ").append(event.outcome());
         for (final PatternStudy.Leg leg : event.legs()) {
             text.append("\n").append(DataService.SOURCES[leg.market()].shortName()).append(": ").append(leg.outcome());
-            if (leg.trough() >= 0) text.append(" · minimo ").append(studyFirst.plusMonths(leg.trough())).append(" (").append(number(leg.fall())).append("%)")
-                    .append(" · rialzo max ").append(number(leg.bounce())).append("% · soglia recupero ")
-                    .append(leg.recovery() < 0 ? "non raggiunta" : studyFirst.plusMonths(leg.recovery()));
+            if (leg.trough() >= 0) {
+                text.append(" · minimo ").append(studyFirst.plusMonths(leg.trough())).append(" (").append(number(leg.fall())).append("%)");
+                if (event.kind().recoveryRequired) text.append(" · rialzo max ").append(number(leg.bounce())).append("% · soglia recupero ")
+                        .append(leg.recovery() < 0 ? "non raggiunta" : studyFirst.plusMonths(leg.recovery()));
+            }
         }
-        return text.append("\nVerifica completa entro ").append(studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths()))
+        return text.append("\nVerifica completa entro ").append(studyFirst.plusMonths(event.signal() + appliedRules.horizonMonths()))
                 .append(". Analisi retrospettiva; HICP per mese di riferimento, non di pubblicazione.").toString();
     }
 
     String patternMethod() {
-        return "Studio disinflazione → discesa → recupero\n"
-                + "Calo HICP di almeno " + number(appliedRules.inflationDrop()) + " punti percentuali in " + appliedRules.inflationMonths() + " mesi. "
-                + "Segnale al primo attraversamento della soglia; un solo episodio finché il calo resta sopra soglia. "
-                + "Baseline mercati: livello all'inizio della finestra HICP. Minimo di ogni mercato dalla baseline inclusa fino a " + appliedRules.declineMonths() + " mesi dopo il segnale. "
-                + "Discesa richiesta almeno " + number(appliedRules.marketDrop()) + "%; recupero almeno " + number(appliedRules.rebound()) + "% dal minimo, nei " + appliedRules.recoveryMonths() + " mesi successivi. "
-                + "I tre mercati possono toccare il minimo in mesi diversi: non si richiede sincronia esatta. Conferma solo se tutti e tre soddisfano entrambe le soglie. "
-                + "Tutti i mesi fino a segnale + " + (appliedRules.declineMonths() + appliedRules.recoveryMonths()) + " devono essere disponibili; una coda incompleta resta in attesa, un buco interno rende la gamba non valutabile. Un fallimento completo di una gamba basta a respingere il pattern comune. "
+        return "Studio: " + appliedRules.kind() + "\n"
+                + (appliedRules.kind().recoveryRequired ? "Calo" : "Salita") + " HICP di almeno " + number(appliedRules.inflationDrop()) + " punti percentuali in " + appliedRules.inflationMonths() + " mesi. "
+                + "Segnale al primo attraversamento della soglia nella direzione scelta; un solo episodio contiguo sopra soglia. "
+                + "Baseline mercati: livello all'inizio della finestra HICP. Minimo dalla baseline inclusa fino a " + appliedRules.declineMonths() + " mesi dopo il segnale. "
+                + "Discesa richiesta almeno " + number(appliedRules.marketDrop()) + "% in ciascuno di EUR/USD, ETF BTP Italia ed EURO STOXX 50. "
+                + (appliedRules.kind().recoveryRequired
+                        ? "Serve anche un recupero di almeno " + number(appliedRules.rebound()) + "% dal rispettivo minimo entro " + appliedRules.recoveryMonths() + " mesi. "
+                        : "Nessun recupero richiesto o analizzato: le impostazioni del recupero sono ignorate e non allungano la finestra. ")
+                + "I minimi possono cadere in mesi diversi, anche prima del segnale: non si richiede una discesa sincronizzata né una discesa di tutti i mercati mondiali. "
+                + "Tutti i mesi fino a segnale + " + appliedRules.horizonMonths() + " devono essere disponibili; una coda incompleta resta in attesa, un buco interno rende la gamba non valutabile. Un fallimento completo di una gamba basta a respingere il pattern comune. "
                 + "Frequenza = confermati / (confermati + non confermati); dati insufficienti e attese sono esclusi. "
-                + "Calcolo sui livelli originali, indipendente da trasformazione, valute SOX, serie visibili e bordo sinistro del grafico. Il termine finale limita anche i dati di conferma. "
-                + "Le bande ocra mostrano tutti i cali HICP; le tre corsie inferiori mostrano discesa (rosso) e recupero (verde) per EUR/USD, ETF BTP ed EURO 50 solo nei casi confermati. "
-                + "La discesa usa il prezzo iniziale, non il drawdown da un massimo mobile. Chiusure mensili non rettificate: cedole/dividendi possono influire. "
-                + "La conferma usa mesi successivi: non è un segnale operativo disponibile alla data HICP. Il campione è piccolo, le soglie esplorative e modificabili; nessuna prova di causalità o previsione.\n\n";
+                + "Calcolo sui livelli originali, indipendente da trasformazione, valuta SOX, serie visibili e bordo sinistro. Il termine finale limita anche i dati di conferma. "
+                + (appliedRules.kind().recoveryRequired
+                        ? "Banda ocra: calo HICP; corsie rosse/verdi: discesa/recupero nei casi confermati. "
+                        : "Banda viola: salita HICP; corsie rosse: discesa nei casi confermati. ")
+                + "Colori personalizzabili. Ordine delle tre corsie: EUR/USD, BTP, EURO 50. La discesa usa il prezzo iniziale, non un massimo mobile. "
+                + "Chiusure mensili non rettificate: cedole/dividendi possono influire. Analisi retrospettiva con mesi successivi, HICP per mese di riferimento, non di pubblicazione. "
+                + "Le soglie sono esplorative e modificabili; nessuna prova di causalità o previsione.\n\n";
     }
 
     String report() {
@@ -799,11 +851,11 @@ public final class MacroLab extends JPanel {
             correlationCsv.append(DataService.SOURCES[i].id()).append(',').append(DataService.SOURCES[j].id()).append(',').append(method.getSelectedItem()).append(',').append(Double.isFinite(c.value()) ? c.value() : "").append(',').append(c.count()).append('\n');
         }
         Files.writeString(folder.resolve("correlazioni" + suffix + ".csv"), correlationCsv);
-        final StringBuilder eventCsv = new StringBuilder("signal,baseline,inflation_drop_pp,event_outcome,verification_end,market,trough,fall_pct,recovery,rebound_max_pct,market_outcome\n");
+        final StringBuilder eventCsv = new StringBuilder("pattern,signal,baseline,inflation_change_pp,event_outcome,verification_end,market,trough,fall_pct,recovery,rebound_max_pct,market_outcome\n");
         for (final PatternStudy.Event event : events) for (final PatternStudy.Leg leg : event.legs()) {
-            eventCsv.append(studyFirst.plusMonths(event.signal())).append(',').append(studyFirst.plusMonths(event.start())).append(',')
-                    .append(event.inflationFall()).append(',').append(event.outcome()).append(',')
-                    .append(studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths())).append(',')
+            eventCsv.append(event.kind().name()).append(',').append(studyFirst.plusMonths(event.signal())).append(',').append(studyFirst.plusMonths(event.start())).append(',')
+                    .append(event.inflationChange()).append(',').append(event.outcome()).append(',')
+                    .append(studyFirst.plusMonths(event.signal() + appliedRules.horizonMonths())).append(',')
                     .append(DataService.SOURCES[leg.market()].id()).append(',')
                     .append(leg.trough() < 0 ? "" : studyFirst.plusMonths(leg.trough())).append(',')
                     .append(Double.isFinite(leg.fall()) ? leg.fall() : "").append(',')
@@ -866,7 +918,7 @@ public final class MacroLab extends JPanel {
                     .isSelected()) tip.append("<br>").append(name(i)).append(": ").append(number(levels[i][t])).append(" · analisi ").append(number(analysis[i][t]));
             if (showPatterns.isSelected()) for (final PatternStudy.Event event : events) {
                 if (!first.plusMonths(t).isBefore(studyFirst.plusMonths(event.start()))
-                        && !first.plusMonths(t).isAfter(studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths()))) {
+                        && !first.plusMonths(t).isAfter(studyFirst.plusMonths(event.signal() + appliedRules.horizonMonths()))) {
                     tip.append("<br><br>").append(eventText(event).replace("\n", "<br>"));
                 }
             }
@@ -916,7 +968,7 @@ public final class MacroLab extends JPanel {
                 }
                 g.setColor(MUTED);
                 for (int i = 0; i <= 4; i++) g.drawString(first.plusMonths((size - 1L) * i / 4).toString(), left + width * i / 4 - 20, top + height + 24);
-                g.drawString(kind == 3 ? "Passa sulla linea per leggere correlazione e numero di mesi." : showPatterns.isSelected() ? "Ocra: calo HICP · barre: EUR/USD, BTP, EURO 50 · rosso: discesa / verde: recupero" : "Scala comune: 1 = una deviazione standard; non è un rendimento.", left, getHeight() - 10);
+                g.drawString(kind == 3 ? "Passa sulla linea per leggere correlazione e numero di mesi." : showPatterns.isSelected() ? appliedRules.kind().recoveryRequired ? "Calo HICP · barre: EUR/USD, BTP, EURO 50 · discesa / recupero" : "Salita HICP · barre: EUR/USD, BTP, EURO 50 · discesa" : "Scala comune: 1 = una deviazione standard; non è un rendimento.", left, getHeight() - 10);
             } finally { g.dispose(); }
         }
         void paintPatterns(final Graphics2D g, final int left, final int top, final int width, final int height) {
@@ -929,9 +981,10 @@ public final class MacroLab extends JPanel {
                 ordinal++;
                 final int signal = left + (int) Math.round((offset + event.signal()) * step);
                 final int begin = left + (int) Math.round((offset + event.start() - 0.5) * step);
-                g.setColor(new Color(inflationColor.getRed(), inflationColor.getGreen(), inflationColor.getBlue(), 28));
+                final Color bandColor = event.kind().recoveryRequired ? inflationColor : inflationRiseColor;
+                g.setColor(new Color(bandColor.getRed(), bandColor.getGreen(), bandColor.getBlue(), 28));
                 g.fillRect(begin, top, Math.max(2, signal - begin + (int) (step * 0.5)), height);
-                g.setColor(inflationColor);
+                g.setColor(bandColor);
                 g.setStroke(new BasicStroke(1));
                 g.drawLine(signal, top + 16, signal, top + height);
                 g.drawString(Integer.toString(ordinal), signal + 3, top + 12);
@@ -939,11 +992,12 @@ public final class MacroLab extends JPanel {
                 for (int i = 0; i < event.legs().size(); i++) {
                     final PatternStudy.Leg leg = event.legs().get(i);
                     final int trough = left + (int) Math.round((offset + leg.trough()) * step);
-                    final int recovery = left + (int) Math.round((offset + leg.recovery()) * step);
                     g.setColor(declineColor);
                     g.fillRect(begin, top + height - 22 + i * 7, Math.max(2, trough - begin), 5);
-                    g.setColor(recoveryColor);
-                    g.fillRect(trough, top + height - 22 + i * 7, Math.max(2, recovery - trough), 5);
+                    if (event.kind().recoveryRequired) {
+                        g.setColor(recoveryColor);
+                        g.fillRect(trough, top + height - 22 + i * 7, Math.max(2, left + (int) Math.round((offset + leg.recovery()) * step) - trough), 5);
+                    }
                 }
             }
             g.setClip(clip);
