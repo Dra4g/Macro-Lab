@@ -8,16 +8,39 @@ import java.nio.file.*;
 import java.time.YearMonth;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.List;
+import java.util.Properties;
+import java.io.Reader;
+import java.io.Writer;
 import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 
 public final class MacroLab extends JPanel {
-    static final Color BG = new Color(246, 245, 241), PANEL = Color.WHITE, INK = new Color(40, 43, 46), MUTED = new Color(99, 105, 109), GRID = new Color(225, 228, 229), ACCENT = new Color(45, 92, 113);
+    static final Color BG = new Color(245, 244, 240), PANEL = Color.WHITE, INK = new Color(40, 43, 46), MUTED = new Color(99, 105, 109), GRID = new Color(225, 228, 229), ACCENT = new Color(49, 76, 69);
     static final Color POSITIVE = new Color(178, 213, 194), NEGATIVE = new Color(234, 192, 178);
-    static final String[] MATRIX_NAMES = {"BTP", "BCE", "HICP", "SOX", "FX", "EU50", "Banc.", "IT10"};
+    static final String[] MATRIX_NAMES = {"BTP", "BCE", "HICP", "SOX", "FX", "EU50", "Banc.", "IT10", "Auto"};
     final Path directory;
+    final Properties appearance = new Properties();
+    final Color[] seriesColors = new Color[DataService.SOURCES.length];
+    final JButton[] colorButtons = new JButton[DataService.SOURCES.length];
+    Color inflationColor = new Color(183, 137, 58), declineColor = new Color(164, 76, 60), recoveryColor = new Color(58, 119, 94);
+    final JCheckBox showPatterns = new JCheckBox("Mostra le bande del pattern", true);
+    final JPanel patternControls = column();
+    final JSpinner inflationMonths = new JSpinner(new SpinnerNumberModel(3, 1, 24, 1));
+    final JSpinner inflationDrop = new JSpinner(new SpinnerNumberModel(1.5, 0.1, 15.0, 0.1));
+    final JSpinner declineMonths = new JSpinner(new SpinnerNumberModel(3, 0, 24, 1));
+    final JSpinner marketDrop = new JSpinner(new SpinnerNumberModel(3.0, 0.1, 50.0, 0.5));
+    final JSpinner recoveryMonths = new JSpinner(new SpinnerNumberModel(6, 1, 36, 1));
+    final JSpinner rebound = new JSpinner(new SpinnerNumberModel(3.0, 0.1, 100.0, 0.5));
+    final JTextArea patternSummary = paragraph("", 3), eventDetails = paragraph("Seleziona un episodio per leggere minimi, recuperi e date di verifica.", 5);
+    final DefaultTableModel patternRows = new DefaultTableModel(new String[]{"Segnale", "Calo HICP (pp)", "EUR/USD", "BTP ETF", "EURO 50", "Esito", "Verifica entro"}, 0) {
+        public boolean isCellEditable(final int row, final int column) { return false; }
+    };
+    List<PatternStudy.Event> events = List.of();
+    final YearMonth studyFirst = YearMonth.of(1998, 1);
+    PatternStudy.Rules appliedRules = new PatternStudy.Rules(3, 1.5, 3, 3, 6, 3);
     final JLabel status = new JLabel("Scarica i dati online per iniziare.");
     final JTextArea insight = paragraph("", 3);
     final JLabel pageTitle = new JLabel();
@@ -26,13 +49,13 @@ public final class MacroLab extends JPanel {
     final JTextArea transformHelp = paragraph("", 4), methodHelp = paragraph("", 4), currencyHelp = paragraph("", 4), lagHelp = paragraph("", 4);
     final JPanel pairControls = column(), rollingControls = column();
     final JButton png = button("Salva immagine");
-    final javax.swing.table.DefaultTableModel dataRows = new DefaultTableModel(new String[]{"Indicatore", "Ultimo valore", "Mese", "Dati"}, 0) {
+    final javax.swing.table.DefaultTableModel dataRows = new DefaultTableModel(new String[]{"Indicatore", "Ultimo valore", "Mese", "Copertura / origine"}, 0) {
          public boolean isCellEditable(final int row,
                                        final int column) {
              return false;
          }
     };
-    final JTextField start = new JTextField("2016-01", 7), end = new JTextField(YearMonth.now().minusMonths(1).toString(), 7);
+    final JTextField start = new JTextField("2000-01", 7), end = new JTextField(YearMonth.now().minusMonths(1).toString(), 7);
     final JComboBox<String> transform = new JComboBox<>(new String[]{"Variazioni mensili", "Valori originali"});
     final JComboBox<String> method = new JComboBox<>(new String[]{"Pearson", "Spearman"});
     final JComboBox<DataService.Source> xChoice = new JComboBox<>(DataService.SOURCES), yChoice = new JComboBox<>(DataService.SOURCES);
@@ -56,17 +79,33 @@ public final class MacroLab extends JPanel {
 
     public MacroLab(final Path directory) {
         this.directory = directory;
+        try (final Reader reader = Files.newBufferedReader(directory.resolve("appearance.properties"))) {
+            appearance.load(reader);
+        } catch (final java.io.IOException ignored) { /* Prima apertura: palette predefinita. */ }
+        for (int i = 0; i < seriesColors.length + 3; i++) {
+            Color color;
+            try {
+                color = new Color(Integer.parseInt(appearance.getProperty("color." + i)));
+            } catch (final RuntimeException ignored) {
+                color = i < seriesColors.length ? DataService.SOURCES[i].color() : i == seriesColors.length ? inflationColor : i == seriesColors.length + 1 ? declineColor : recoveryColor;
+            }
+            if (i < seriesColors.length) seriesColors[i] = color;
+            else if (i == seriesColors.length) inflationColor = color;
+            else if (i == seriesColors.length + 1) declineColor = color;
+            else recoveryColor = color;
+        }
+        transform.setSelectedIndex(1);
         setLayout(new BorderLayout(18, 14));
         setBorder(new EmptyBorder(18, 22, 12, 22));
         setBackground(BG);
 
         final JPanel heading = row();
         final JPanel introduction = column();
-        final JLabel title = new JLabel("Analisi dei mercati");
-        title.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        final JLabel title = new JLabel("MacroLab");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 29));
         introduction.add(title);
         introduction.add(Box.createVerticalStrut(3));
-        introduction.add(label("BTP, tassi, inflazione e mercati azionari", MUTED));
+        introduction.add(label("OSSERVATORIO MACRO  /  Europa e mercati", MUTED));
         introduction.add(Box.createVerticalStrut(3));
         periodSummary.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         periodSummary.setForeground(MUTED);
@@ -104,10 +143,69 @@ public final class MacroLab extends JPanel {
         dates.add(field("Dal mese", start));
         dates.add(field("Al mese", end));
         settings.add(dates);
-        settings.add(paragraph("Scrivi anno e mese: 2020-01 significa gennaio 2020. Il mese in corso è escluso.", 3));
+        settings.add(paragraph("Dal 2000, dove la fonte dispone di dati. Formato anno-mese; mese corrente escluso.", 3));
         final JButton apply = button("Applica periodo");
         apply.setAlignmentX(Component.LEFT_ALIGNMENT);
         settings.add(apply);
+        final JPanel presets = row();
+        presets.setAlignmentX(Component.LEFT_ALIGNMENT);
+        presets.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+        for (final int year : new int[]{2000, 2008, 2020}) {
+            final JButton preset = button("" + year);
+            preset.addActionListener((final ActionEvent e) -> { start.setText(year + "-01"); calculate(); });
+            presets.add(preset);
+            presets.add(Box.createHorizontalStrut(6));
+        }
+        settings.add(Box.createVerticalStrut(6));
+        settings.add(presets);
+        patternControls.add(section("Inflazione · discesa · recupero"));
+        showPatterns.setOpaque(false);
+        showPatterns.addActionListener((final ActionEvent e) -> overview.repaint());
+        patternControls.add(showPatterns);
+        patternControls.add(paragraph("Bande: ocra = calo HICP; rosso e verde = discesa e recupero nei tre mercati, solo se confermati.", 4));
+        final JButton study = button("Apri lo studio degli episodi");
+        study.addActionListener((final ActionEvent e) -> tabs.setSelectedIndex(6));
+        patternControls.add(study);
+        final JToggleButton configure = new JToggleButton("Soglie e colori…");
+        configure.setAlignmentX(Component.LEFT_ALIGNMENT);
+        patternControls.add(Box.createVerticalStrut(8));
+        patternControls.add(configure);
+        final JPanel options = column();
+        options.setVisible(false);
+        configure.addActionListener((final ActionEvent e) -> { options.setVisible(configure.isSelected()); revalidate(); });
+        options.add(field("Calo HICP: finestra in mesi", inflationMonths));
+        options.add(field("Calo minimo HICP (punti %)", inflationDrop));
+        options.add(field("Discesa: mesi dopo il segnale", declineMonths));
+        options.add(field("Calo minimo di ogni mercato (%)", marketDrop));
+        options.add(field("Recupero: mesi dal minimo", recoveryMonths));
+        options.add(field("Rialzo minimo dal minimo (%)", rebound));
+        options.add(paragraph("Confronto storico sui livelli. Il segnale è datato al mese HICP; la conferma richiede dati successivi.", 4));
+        final JPanel bandColors = row();
+        bandColors.setAlignmentX(Component.LEFT_ALIGNMENT);
+        bandColors.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+        for (int i = 0; i < 3; i++) {
+            final int band = i;
+            final JButton color = button(new String[]{"HICP", "Discesa", "Recupero"}[i]);
+            color.setForeground(i == 0 ? inflationColor : i == 1 ? declineColor : recoveryColor);
+            color.addActionListener((final ActionEvent e) -> {
+                final Color chosen;
+                if ((chosen = JColorChooser.showDialog(this, "Colore della banda", band == 0 ? inflationColor : band == 1 ? declineColor : recoveryColor)) != null) {
+                    if (band == 0) inflationColor = chosen;
+                    else if (band == 1) declineColor = chosen;
+                    else recoveryColor = chosen;
+                    color.setForeground(chosen);
+                    saveAppearance();
+                    overview.repaint();
+                }
+            });
+            bandColors.add(color);
+        }
+        options.add(bandColors);
+        patternControls.add(options);
+        settings.add(patternControls);
+        for (final JSpinner control : new JSpinner[]{inflationMonths, inflationDrop, declineMonths, marketDrop, recoveryMonths, rebound}) {
+            control.addChangeListener((final javax.swing.event.ChangeEvent e) -> calculate());
+        }
         settings.add(section("Come confrontare i dati"));
         settings.add(field("Valori da usare", transform));
         settings.add(transformHelp);
@@ -135,7 +233,7 @@ public final class MacroLab extends JPanel {
         final JScrollPane settingsScroll = new JScrollPane(settings);
         settingsScroll.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, GRID));
         settingsScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        settingsScroll.setPreferredSize(new Dimension(285, 400));
+        settingsScroll.setPreferredSize(new Dimension(300, 400));
         settingsScroll.getViewport().setBackground(BG);
         settingsScroll.getVerticalScrollBar().setUnitIncrement(18);
         add(settingsScroll, BorderLayout.WEST);
@@ -147,22 +245,55 @@ public final class MacroLab extends JPanel {
         pageTitle.setAlignmentX(Component.LEFT_ALIGNMENT);
         pageHeading.add(pageTitle);
         pageHeading.add(Box.createVerticalStrut(5));
-        pageHelp.setPreferredSize(new Dimension(0, 70));
+        pageHelp.setPreferredSize(new Dimension(0, 60));
         pageHeading.add(pageHelp);
         content.add(pageHeading, BorderLayout.NORTH);
 
         final JPanel linePage = new JPanel(new BorderLayout());
         linePage.setBackground(PANEL);
-        final JPanel legend = new JPanel(new GridLayout(4, 2, 14, 4));
+        final JPanel legend = new JPanel(new GridLayout(0, 3, 12, 5));
         legend.setBackground(PANEL);
         legend.setBorder(new EmptyBorder(12, 15, 8, 15));
         for (int i = 0; i < visible.length; i++) {
-            visible[i] = new JCheckBox(DataService.SOURCES[i].name(), i < 3);
-            visible[i].setForeground(DataService.SOURCES[i].color());
+            visible[i] = new JCheckBox(i == 2 ? "Inflazione (HICP)" : DataService.SOURCES[i].shortName(), i == 0 || i == 2 || i == 4 || i == 5);
+            visible[i].setForeground(INK);
             visible[i].setOpaque(false);
             visible[i].setToolTipText("<html><body width='350'>" + DataService.SOURCES[i].description() + "</body></html>");
             visible[i].addActionListener((final ActionEvent e) -> overview.repaint());
-            legend.add(visible[i]);
+            final int index = i;
+            final JPanel item = new JPanel(new FlowLayout(FlowLayout.LEADING, 6, 0));
+            item.setOpaque(false);
+            item.add(visible[i]);
+            colorButtons[i] = button("");
+            colorButtons[i].setIcon(new Icon() {
+                public int getIconWidth() { return 16; }
+                public int getIconHeight() { return 16; }
+                public void paintIcon(final Component component, final Graphics graphics, final int x, final int y) {
+                    final Graphics2D dot = (Graphics2D) graphics.create();
+                    try {
+                        dot.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        dot.setColor(component.getForeground());
+                        dot.fillOval(x + 2, y + 2, 11, 11);
+                        dot.setColor(MUTED);
+                        dot.drawOval(x + 2, y + 2, 11, 11);
+                    } finally { dot.dispose(); }
+                }
+            });
+            colorButtons[i].setForeground(seriesColors[i]);
+            colorButtons[i].setBorder(new EmptyBorder(1, 6, 1, 6));
+            colorButtons[i].setToolTipText("Scegli colore · " + DataService.SOURCES[i].name());
+            colorButtons[i].getAccessibleContext().setAccessibleName("Colore " + DataService.SOURCES[i].name());
+            colorButtons[i].addActionListener((final ActionEvent e) -> {
+                final Color chosen;
+                if ((chosen = JColorChooser.showDialog(this, "Colore · " + DataService.SOURCES[index].name(), seriesColors[index])) != null) {
+                    seriesColors[index] = chosen;
+                    colorButtons[index].setForeground(chosen);
+                    saveAppearance();
+                    overview.repaint();
+                }
+            });
+            item.add(colorButtons[i]);
+            legend.add(item);
         }
         linePage.add(legend, BorderLayout.NORTH);
         linePage.add(overview, BorderLayout.CENTER);
@@ -193,7 +324,10 @@ public final class MacroLab extends JPanel {
         final JPanel dataPage = new JPanel(new BorderLayout(0, 12));
         dataPage.setBackground(PANEL);
         dataPage.setBorder(new EmptyBorder(14, 14, 14, 14));
-        dataPage.add(new JScrollPane(dataTable), BorderLayout.CENTER);
+        final JScrollPane dataScroll = new JScrollPane(dataTable);
+        dataScroll.setColumnHeaderView(dataTable.getTableHeader());
+        dataScroll.setBorder(BorderFactory.createLineBorder(GRID));
+        dataPage.add(dataScroll, BorderLayout.CENTER);
         dataPage.add(dataDescription, BorderLayout.SOUTH);
         tabs.addTab("Dati", dataPage);
         notes.setEditable(false);
@@ -202,6 +336,73 @@ public final class MacroLab extends JPanel {
         notes.setMargin(new Insets(20, 22, 20, 22));
         notes.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         tabs.addTab("Fonti", new JScrollPane(notes));
+        final JTable eventTable = new JTable(patternRows) {
+            public String getToolTipText(final MouseEvent e) {
+                final int row = rowAtPoint(e.getPoint());
+                return row < 0 ? null : eventText(events.get(convertRowIndexToModel(row)));
+            }
+        };
+        eventTable.setRowHeight(42);
+        eventTable.setShowVerticalLines(false);
+        eventTable.setFillsViewportHeight(true);
+        eventTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        eventTable.getTableHeader().setReorderingAllowed(false);
+        eventTable.getColumnModel().getColumn(5).setPreferredWidth(155);
+        eventTable.getSelectionModel().addListSelectionListener((final javax.swing.event.ListSelectionEvent e) -> {
+            final int selected;
+            if ((selected = eventTable.getSelectedRow()) >= 0) eventDetails.setText(eventText(events.get(selected)));
+        });
+        final JPanel patternPage = new JPanel(new BorderLayout(0, 12));
+        patternPage.setBackground(PANEL);
+        patternPage.setBorder(new EmptyBorder(14, 16, 14, 16));
+        patternPage.add(patternSummary, BorderLayout.NORTH);
+        final JScrollPane eventScroll = new JScrollPane(eventTable);
+        eventScroll.setColumnHeaderView(eventTable.getTableHeader());
+        eventScroll.setBorder(BorderFactory.createLineBorder(GRID));
+        patternPage.add(eventScroll, BorderLayout.CENTER);
+        eventDetails.setPreferredSize(new Dimension(0, 130));
+        eventDetails.setMaximumSize(new Dimension(Integer.MAX_VALUE, 150));
+        final JPanel eventFooter = new JPanel(new BorderLayout(0, 6));
+        eventFooter.setOpaque(false);
+        eventFooter.add(eventDetails, BorderLayout.CENTER);
+        final JButton focusEvent = button("Inquadra l'episodio nel grafico");
+        focusEvent.addActionListener((final ActionEvent e) -> {
+            final int selected;
+            if ((selected = eventTable.getSelectedRow()) < 0) { status.setText("Seleziona prima un episodio nella tabella."); return; }
+            final PatternStudy.Event event = events.get(selected);
+            final YearMonth currentEnd = first.plusMonths(size - 1);
+            final YearMonth focusStart = studyFirst.plusMonths(event.start()).minusMonths(3);
+            start.setText((focusStart.isBefore(YearMonth.of(2000, 1)) ? YearMonth.of(2000, 1) : focusStart).toString());
+            final YearMonth focusEnd = studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths() + 3);
+            end.setText((focusEnd.isAfter(currentEnd) ? currentEnd : focusEnd).toString());
+            transform.setSelectedIndex(1);
+            for (int i = 0; i < visible.length; i++) visible[i].setSelected(i == 0 || i == 2 || i == 4 || i == 5);
+            showPatterns.setSelected(true);
+            calculate();
+            tabs.setSelectedIndex(0);
+        });
+        eventFooter.add(focusEvent, BorderLayout.SOUTH);
+        patternPage.add(eventFooter, BorderLayout.SOUTH);
+        tabs.addTab("Pattern", patternPage);
+        tabs.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI() {
+            protected void installDefaults() {
+                super.installDefaults();
+                tabInsets = new Insets(9, 12, 9, 12);
+                contentBorderInsets = new Insets(1, 0, 0, 0);
+                tabAreaInsets = new Insets(0, 0, 0, 0);
+            }
+            protected void paintTabBackground(final Graphics g, final int placement, final int index, final int x, final int y, final int width, final int height, final boolean selected) {
+                g.setColor(selected ? PANEL : BG);
+                g.fillRect(x, y, width, height);
+            }
+            protected void paintTabBorder(final Graphics g, final int placement, final int index, final int x, final int y, final int width, final int height, final boolean selected) {
+                if (selected) { g.setColor(ACCENT); g.fillRect(x + 10, y + height - 3, width - 20, 2); }
+            }
+            protected void paintContentBorder(final Graphics g, final int placement, final int selected) {
+                g.setColor(GRID);
+                g.drawLine(0, calculateTabAreaHeight(placement, runCount, maxTabHeight), tabPane.getWidth(), calculateTabAreaHeight(placement, runCount, maxTabHeight));
+            }
+        });
         content.add(tabs, BorderLayout.CENTER);
         insight.setForeground(INK);
         /* Prima apertura: l'area era nascosta, quindi la larghezza può essere 0.
@@ -240,7 +441,7 @@ public final class MacroLab extends JPanel {
         }
         /* La colonna segue la larghezza disponibile; solo l'altezza scorre.
            Altrimenti i campi data allargano la vista e tagliano le spiegazioni. */
-        public Dimension getPreferredScrollableViewportSize() { return new Dimension(285, 400); }
+        public Dimension getPreferredScrollableViewportSize() { return new Dimension(300, 400); }
         public int getScrollableUnitIncrement(final Rectangle visible, final int orientation, final int direction) { return 18; }
         public int getScrollableBlockIncrement(final Rectangle visible, final int orientation, final int direction) { return Math.max(18, visible.height - 18); }
         public boolean getScrollableTracksViewportWidth() { return true; }
@@ -301,6 +502,7 @@ public final class MacroLab extends JPanel {
         rollingControls.setVisible(tab == 3);
         insight.setVisible(tab == 2 || tab == 3);
         png.setEnabled(tab < 4);
+        patternControls.setVisible(tab == 0 || tab == 6);
         method.setEnabled(tab >= 1 && tab <= 3);
         transformHelp.setText(transform.getSelectedIndex() == 0
                 ? "Confronta i cambiamenti mensili. Prezzo 100 → 102: +2%. Tasso 3% → 3,25%: +0,25 punti."
@@ -321,14 +523,16 @@ public final class MacroLab extends JPanel {
             case 2 -> "Il confronto tra due indicatori";
             case 3 -> "Il legame cambia nel tempo?";
             case 4 -> "I dati che stai utilizzando";
+            case 6 -> "Il pattern regge nei dati?";
             default -> "Fonti e dettagli dei calcoli";
         });
         pageHelp.setText(switch (tab) {
-            case 0 -> "Scegli le serie da mostrare. Sono riportate su una scala comune: 0 è la media del periodo. L'altezza delle linee non indica euro o percentuali.";
+            case 0 -> "Seleziona le serie; il punto colorato cambia il colore. Scala comune: 0 = media del periodo. Le bande evidenziano gli episodi; passa sul grafico per date e dettagli.";
             case 1 -> "Verde: movimenti concordi. Rosso: opposti. Vicino a 0: legame debole. Le celle confrontano gli stessi mesi. Passa su una cella per leggere gli indicatori o cliccala per approfondire.";
             case 2 -> "Ogni punto è una coppia di osservazioni. Il primo indicatore è sull'asse orizzontale, il secondo su quello verticale. A sinistra puoi scegliere le serie e spostare i mesi.";
             case 3 -> "Ogni punto usa solo i mesi della finestra scelta. La linea mostra come cambia il legame; il riepilogo in basso riguarda invece l’intero periodo. I tratti vuoti non sono calcolabili.";
-            case 4 -> "Questi sono gli ultimi valori disponibili, indipendentemente dal periodo scelto. BTP e banche sono rappresentati da ETF; seleziona una riga per i dettagli.";
+            case 4 -> "Ultimi valori disponibili, indipendenti dal filtro. La copertura indica lo storico realmente scaricato: nessuna ricostruzione prima dell’avvio degli ETF.";
+            case 6 -> "Tutti i cali HICP che attraversano la soglia, inclusi i casi senza il pattern. Confermato solo se EUR/USD, ETF BTP Italia ed EURO STOXX 50 scendono e poi recuperano secondo le regole scelte.";
             default -> "Qui trovi la provenienza dei dati, le date dei download e le formule usate. Le correlazioni descrivono un'associazione, non dimostrano un rapporto di causa ed effetto.";
         });
         revalidate();
@@ -336,7 +540,15 @@ public final class MacroLab extends JPanel {
 
     static JPanel row() { final JPanel row = new JPanel(); row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS)); row.setOpaque(false); return row; }
     static JLabel label(final String text, final Color color) { final JLabel label = new JLabel(text); label.setForeground(color); return label; }
-    static JButton button(final String text) { final JButton b = new JButton(text); b.setMargin(new Insets(7, 12, 7, 12)); return b; }
+    static JButton button(final String text) {
+        final JButton b = new JButton(text);
+        b.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        b.setBackground(PANEL);
+        b.setForeground(INK);
+        b.setFocusPainted(false);
+        b.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(GRID), new EmptyBorder(8, 12, 8, 12)));
+        return b;
+    }
     static String number(final double d) { return Double.isFinite(d) ? String.format(Locale.ITALY, "%.2f", d) : "n/d"; }
 
     void load(final boolean online) {
@@ -369,7 +581,7 @@ public final class MacroLab extends JPanel {
                 final DataService.Series series = dataset.series().get(i);
                 value = number(series.values().lastEntry().getValue()) + "  " + source.unit();
                 month = series.values().lastKey().toString();
-                origin = series.status().startsWith("Online") ? "Aggiornati online" : "Salvati sul computer";
+                origin = series.values().firstKey() + " → " + series.values().lastKey() + (series.status().startsWith("Online") ? " · online" : " · cache");
             }
             dataRows.addRow(new Object[]{source.name(), value, month, origin});
         }
@@ -383,8 +595,9 @@ public final class MacroLab extends JPanel {
             if ((count = java.time.temporal.ChronoUnit.MONTHS
                     .between(from, to) + 1) < 3
                     || count > 600) throw new IllegalArgumentException("Scegli un intervallo tra 3 e 600 mesi.");
+            if (from.isBefore(YearMonth.of(2000, 1))) throw new IllegalArgumentException("Lo studio parte da gennaio 2000.");
             if (!to
-                    .isBefore(YearMonth.now())) throw new IllegalArgumentException("Il mese corrente è incompleto: scegli al massimo il mese scorso.");
+                    .isBefore(YearMonth.now(java.time.ZoneId.of("Europe/Rome")))) throw new IllegalArgumentException("Il mese corrente è incompleto: scegli al massimo il mese scorso.");
             /* Calcolo la prima variazione usando anche il mese precedente al filtro.
                Il calendario è continuo: i valori assenti restano NaN. */
             final double[][] extended = dataset.align(from.minusMonths(1), to, euroSox.isSelected());
@@ -395,6 +608,13 @@ public final class MacroLab extends JPanel {
                 analysis[i] = transform.getSelectedIndex() == 0 ? Arrays.copyOfRange(Stats.changes(extended[i], DataService.SOURCES[i].rate()), 1, extended[i].length) : levels[i];
                 z[i] = Stats.standardize(analysis[i]);
             }
+            appliedRules = new PatternStudy.Rules((int) inflationMonths.getValue(), ((Number) inflationDrop.getValue()).doubleValue(), (int) declineMonths.getValue(), ((Number) marketDrop.getValue()).doubleValue(), (int) recoveryMonths.getValue(), ((Number) rebound.getValue()).doubleValue());
+            /* Rilevamento su tutto lo storico fino al limite scelto. Cambiare il
+               bordo sinistro non sposta i segnali e non cancella il loro contesto. */
+            events = PatternStudy.detect(dataset.align(studyFirst, to, false), appliedRules).stream()
+                    .filter((final PatternStudy.Event event) -> !studyFirst.plusMonths(event.signal()).isBefore(from))
+                    .toList();
+            updatePatterns();
             /* Leggo metodo e ritardo fuori dai cicli; nessun accesso ripetuto ai
                controlli Swing durante la costruzione delle serie derivate. */
             final boolean spearman = method.getSelectedIndex() == 1;
@@ -402,7 +622,7 @@ public final class MacroLab extends JPanel {
             for (int i = 0; i < analysis.length; i++) {
                 for (int j = i; j < analysis.length; j++) {
                     /* Ritardo zero: r(X,Y) = r(Y,X), anche eliminando i mancanti
-                       per coppia. Otto serie: 8*9/2 = 36 calcoli invece di 64. */
+                       per coppia. Nove serie: 9*10/2 = 45 calcoli invece di 81. */
                     correlations[i][j] = Stats.correlate(analysis[i], analysis[j], 0, size, 0, spearman);
                     correlations[j][i] = correlations[i][j];
                 }
@@ -423,14 +643,79 @@ public final class MacroLab extends JPanel {
             for (final DataService.Series s : dataset.series()) if (!s
                     .values()
                     .isEmpty()) available++;
-            status.setText(available + " indicatori disponibili su 8  ·  Periodo applicato: " + from + " → " + to + "  ·  Valori mancanti esclusi dai confronti");
+            status.setText(available + " indicatori disponibili su " + DataService.SOURCES.length + "  ·  Periodo applicato: " + from + " → " + to + "  ·  " + events.size() + " episodi HICP");
             periodSummary.setText("Periodo applicato: " + from + " — " + to);
             notes.setText(report()); notes.setCaretPosition(0); repaint();
-        } catch (final Exception e) { size = 0; periodSummary.setText("Periodo non valido"); insight.setText("Parametri non validi: correggi il periodo e premi Applica."); status.setText("Controlla i parametri: " + e.getMessage()); repaint(); }
+        } catch (final Exception e) { size = 0; events = List.of(); patternRows.setRowCount(0); patternSummary.setText("Periodo non valido: correggi i parametri."); periodSummary.setText("Periodo non valido"); insight.setText("Parametri non validi: correggi il periodo e premi Applica."); status.setText("Controlla i parametri: " + e.getMessage()); repaint(); }
     }
 
     String name(final int index) { return DataService.SOURCES[index].shortName() + (index == 3 ? (euroSox.isSelected() ? " EUR" : " USD") : ""); }
     Stats.Correlation pair(final int from, final int to, final int delay) { return Stats.correlate(analysis[xChoice.getSelectedIndex()], analysis[yChoice.getSelectedIndex()], from, to, delay, method.getSelectedIndex() == 1); }
+
+    void saveAppearance() {
+        for (int i = 0; i < seriesColors.length + 3; i++) appearance.setProperty("color." + i,
+                Integer.toString((i < seriesColors.length ? seriesColors[i] : i == seriesColors.length ? inflationColor : i == seriesColors.length + 1 ? declineColor : recoveryColor).getRGB()));
+        try {
+            Files.createDirectories(directory);
+            try (final Writer writer = Files.newBufferedWriter(directory.resolve("appearance.properties"))) {
+                appearance.store(writer, "MacroLab palette");
+            }
+        } catch (final java.io.IOException e) { status.setText("Colore applicato; salvataggio palette fallito: " + e.getMessage()); }
+    }
+
+    void updatePatterns() {
+        patternRows.setRowCount(0);
+        eventDetails.setText("Seleziona un episodio per leggere minimi, recuperi e date di verifica. Le percentuali in tabella sono le discese dai livelli iniziali.");
+        int confirmed = 0, rejected = 0, missing = 0, pending = 0;
+        for (final PatternStudy.Event event : events) {
+            switch (event.outcome()) {
+                case CONFIRMED -> confirmed++;
+                case REJECTED -> rejected++;
+                case MISSING -> missing++;
+                case PENDING -> pending++;
+            }
+            final Object[] row = new Object[7];
+            row[0] = studyFirst.plusMonths(event.signal());
+            row[1] = "−" + number(event.inflationFall());
+            for (int i = 0; i < event.legs().size(); i++) row[2 + i] = Double.isFinite(event.legs().get(i).fall()) ? number(event.legs().get(i).fall()) + "%" : "n/d";
+            row[5] = event.outcome();
+            row[6] = studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths());
+            patternRows.addRow(row);
+        }
+        patternSummary.setText(events.size() + " episodi  /  " + confirmed + " confermati su " + (confirmed + rejected) + " valutabili"
+                + (confirmed + rejected > 0 ? " (" + number(100.0 * confirmed / (confirmed + rejected)) + "%)" : "")
+                + "\n" + rejected + " non confermati · " + pending + " in attesa · " + missing + " con dati insufficienti. "
+                + "Frequenza descrittiva, senza test statistico; episodi eventualmente sovrapposti.");
+    }
+
+    String eventText(final PatternStudy.Event event) {
+        final StringBuilder text = new StringBuilder("Segnale ").append(studyFirst.plusMonths(event.signal()))
+                .append(" · HICP −").append(number(event.inflationFall())).append(" pp dal ").append(studyFirst.plusMonths(event.start()))
+                .append(" · ").append(event.outcome());
+        for (final PatternStudy.Leg leg : event.legs()) {
+            text.append("\n").append(DataService.SOURCES[leg.market()].shortName()).append(": ").append(leg.outcome());
+            if (leg.trough() >= 0) text.append(" · minimo ").append(studyFirst.plusMonths(leg.trough())).append(" (").append(number(leg.fall())).append("%)")
+                    .append(" · rialzo max ").append(number(leg.bounce())).append("% · soglia recupero ")
+                    .append(leg.recovery() < 0 ? "non raggiunta" : studyFirst.plusMonths(leg.recovery()));
+        }
+        return text.append("\nVerifica completa entro ").append(studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths()))
+                .append(". Analisi retrospettiva; HICP per mese di riferimento, non di pubblicazione.").toString();
+    }
+
+    String patternMethod() {
+        return "Studio disinflazione → discesa → recupero\n"
+                + "Calo HICP di almeno " + number(appliedRules.inflationDrop()) + " punti percentuali in " + appliedRules.inflationMonths() + " mesi. "
+                + "Segnale al primo attraversamento della soglia; un solo episodio finché il calo resta sopra soglia. "
+                + "Baseline mercati: livello all'inizio della finestra HICP. Minimo di ogni mercato dalla baseline inclusa fino a " + appliedRules.declineMonths() + " mesi dopo il segnale. "
+                + "Discesa richiesta almeno " + number(appliedRules.marketDrop()) + "%; recupero almeno " + number(appliedRules.rebound()) + "% dal minimo, nei " + appliedRules.recoveryMonths() + " mesi successivi. "
+                + "I tre mercati possono toccare il minimo in mesi diversi: non si richiede sincronia esatta. Conferma solo se tutti e tre soddisfano entrambe le soglie. "
+                + "Tutti i mesi fino a segnale + " + (appliedRules.declineMonths() + appliedRules.recoveryMonths()) + " devono essere disponibili; una coda incompleta resta in attesa, un buco interno rende la gamba non valutabile. Un fallimento completo di una gamba basta a respingere il pattern comune. "
+                + "Frequenza = confermati / (confermati + non confermati); dati insufficienti e attese sono esclusi. "
+                + "Calcolo sui livelli originali, indipendente da trasformazione, valute SOX, serie visibili e bordo sinistro del grafico. Il termine finale limita anche i dati di conferma. "
+                + "Le bande ocra mostrano tutti i cali HICP; le tre corsie inferiori mostrano discesa (rosso) e recupero (verde) per EUR/USD, ETF BTP ed EURO 50 solo nei casi confermati. "
+                + "La discesa usa il prezzo iniziale, non il drawdown da un massimo mobile. Chiusure mensili non rettificate: cedole/dividendi possono influire. "
+                + "La conferma usa mesi successivi: non è un segnale operativo disponibile alla data HICP. Il campione è piccolo, le soglie esplorative e modificabili; nessuna prova di causalità o previsione.\n\n";
+    }
 
     String report() {
         final StringBuilder text = new StringBuilder("Analisi dei mercati\n\n");
@@ -441,6 +726,10 @@ public final class MacroLab extends JPanel {
         text.append("Interpretazione\nA parità di flussi e scadenza, un aumento del rendimento richiesto riduce il prezzo di un'obbligazione. Il tasso BCE non coincide con il rendimento dei BTP: contano anche aspettative e rischio sovrano. Inflazione, banche, cambio e semiconduttori possono rispondere a più fattori comuni; segni e intensità cambiano nel tempo. I dati di inflazione sono riferiti al mese economico e possono essere rivisti: questa analisi non è un backtest con informazioni disponibili in tempo reale.\n\n");
         text.append("Indicatori utilizzati\nETF BTP e banche sono proxy espliciti, con costi, composizione e stacchi cedolari propri. Prezzi di chiusura NON rettificati: non includono reinvestimento di dividendi o cedole. Un singolo BTP richiede ISIN e prezzi storici coerenti. Il rendimento italiano 10 anni è una media mensile; gli altri mercati e il tasso BCE sono di fine mese. La valuta base influenza le correlazioni: SOX in EUR = SOX in USD / USD per EUR, senza copertura valutaria.\n\n");
         text.append("Fonti e disponibilità\nDownload BCE ufficiale via SDMX; quotazioni Yahoo Finance tramite endpoint pubblico non contrattualizzato, soggetto a cambiamenti o limiti. Nessun dato simulato. In caso di errore si usa solo la cache disponibile, identificata qui sotto. Gli ultimi valori nella tabella Dati sono quelli disponibili e non dipendono dal filtro.\n\n");
+        text.append("Storico dal 2000\nSi richiedono anche osservazioni precedenti per le finestre e la prima variazione. La selezione parte da gennaio 2000; gli ETF mantengono l'inizio effettivo restituito dalla fonte. Nessuna estensione sintetica né sostituzione retroattiva di uno strumento.\n\n");
+        text.append(patternMethod()).append(patternSummary.getText()).append("\n\n");
+        for (final PatternStudy.Event event : events) text.append(eventText(event)).append("\n\n");
+        text.append("Riferimenti settore auto e cambio\nhttps://stoxx.com/index/SXAP/\nhttps://www.ishares.com/uk/individual/en/products/251932/ishares-stoxx-europe-600-automobiles-parts-ucits-etf-de-fund\nhttps://www.ecb.europa.eu/press/economic-bulletin/articles/2020/html/ecb.ebart202003_01~7fc0abdec2.en.html\n\n");
         for (final DataService.Series series : dataset.series()) {
             text.append(series.source().name()).append("\n").append(series.source().description()).append("\nStato: ").append(series.status()).append("\nDownload UTC: ").append(series.retrieved()).append("\nCopertura: ").append(series.values().isEmpty() ? "nessuna" : series.values().firstKey() + " → " + series.values().lastKey() + "; " + series.values().size() + " mesi").append("\n").append(series.url()).append("\n\n");
         }
@@ -510,6 +799,18 @@ public final class MacroLab extends JPanel {
             correlationCsv.append(DataService.SOURCES[i].id()).append(',').append(DataService.SOURCES[j].id()).append(',').append(method.getSelectedItem()).append(',').append(Double.isFinite(c.value()) ? c.value() : "").append(',').append(c.count()).append('\n');
         }
         Files.writeString(folder.resolve("correlazioni" + suffix + ".csv"), correlationCsv);
+        final StringBuilder eventCsv = new StringBuilder("signal,baseline,inflation_drop_pp,event_outcome,verification_end,market,trough,fall_pct,recovery,rebound_max_pct,market_outcome\n");
+        for (final PatternStudy.Event event : events) for (final PatternStudy.Leg leg : event.legs()) {
+            eventCsv.append(studyFirst.plusMonths(event.signal())).append(',').append(studyFirst.plusMonths(event.start())).append(',')
+                    .append(event.inflationFall()).append(',').append(event.outcome()).append(',')
+                    .append(studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths())).append(',')
+                    .append(DataService.SOURCES[leg.market()].id()).append(',')
+                    .append(leg.trough() < 0 ? "" : studyFirst.plusMonths(leg.trough())).append(',')
+                    .append(Double.isFinite(leg.fall()) ? leg.fall() : "").append(',')
+                    .append(leg.recovery() < 0 ? "" : studyFirst.plusMonths(leg.recovery())).append(',')
+                    .append(Double.isFinite(leg.bounce()) ? leg.bounce() : "").append(',').append(leg.outcome()).append('\n');
+        }
+        Files.writeString(folder.resolve("episodi-pattern" + suffix + ".csv"), eventCsv);
         Files.writeString(folder.resolve("metodo-e-fonti" + suffix + ".txt"), report());
     }
 
@@ -522,7 +823,7 @@ public final class MacroLab extends JPanel {
                 public void mouseClicked(final MouseEvent e) {
                     if (size == 0) return;
                     final int cell;
-                    if ((cell = Math.min((getWidth() - 180) / 8, (getHeight() - 96) / 8)) <= 0) return;
+                    if ((cell = Math.min((getWidth() - 180) / DataService.SOURCES.length, (getHeight() - 96) / DataService.SOURCES.length)) <= 0) return;
                     /* Coordinate acquisite prima dei controlli: preservo l'ordine
                        delle letture dell'evento, anche sui bordi esterni. */
                     final int x = (e.getX() - 142) / cell, y = (e.getY() - 64) / cell;
@@ -530,8 +831,8 @@ public final class MacroLab extends JPanel {
                             .getX() >= 142
                             && e
                             .getY() >= 64
-                            && x < 8
-                            && y < 8) { xChoice.setSelectedIndex(x); yChoice.setSelectedIndex(y); tabs.setSelectedIndex(2); }
+                            && x < DataService.SOURCES.length
+                            && y < DataService.SOURCES.length) { xChoice.setSelectedIndex(x); yChoice.setSelectedIndex(y); tabs.setSelectedIndex(2); }
                 }
             });
         }
@@ -539,7 +840,7 @@ public final class MacroLab extends JPanel {
             if (size == 0) return null;
             if (kind == 1) {
                 final int cell;
-                if ((cell = Math.min((getWidth() - 180) / 8, (getHeight() - 96) / 8)) <= 0
+                if ((cell = Math.min((getWidth() - 180) / DataService.SOURCES.length, (getHeight() - 96) / DataService.SOURCES.length)) <= 0
                         || e
                         .getX() < 142
                         || e
@@ -547,8 +848,8 @@ public final class MacroLab extends JPanel {
                 final int x = (e.getX() - 142) / cell;
                 final int y;
                 if ((y = (e
-                        .getY() - 64) / cell) >= 8
-                        || x >= 8) return null;
+                        .getY() - 64) / cell) >= DataService.SOURCES.length
+                        || x >= DataService.SOURCES.length) return null;
                 final Stats.Correlation c = correlations[x][y];
                 return "<html>" + DataService.SOURCES[x].name() + " / " + DataService.SOURCES[y].name() + "<br>Correlazione: " + number(c.value()) + " · Mesi confrontabili: " + c.count() + "<br>Clicca per aprire il confronto.</html>";
             }
@@ -563,6 +864,12 @@ public final class MacroLab extends JPanel {
             final StringBuilder tip = new StringBuilder("<html>").append(first.plusMonths(t));
             for (int i = 0; i < levels.length; i++) if (visible[i]
                     .isSelected()) tip.append("<br>").append(name(i)).append(": ").append(number(levels[i][t])).append(" · analisi ").append(number(analysis[i][t]));
+            if (showPatterns.isSelected()) for (final PatternStudy.Event event : events) {
+                if (!first.plusMonths(t).isBefore(studyFirst.plusMonths(event.start()))
+                        && !first.plusMonths(t).isAfter(studyFirst.plusMonths(event.signal() + appliedRules.declineMonths() + appliedRules.recoveryMonths()))) {
+                    tip.append("<br><br>").append(eventText(event).replace("\n", "<br>"));
+                }
+            }
             return tip.append("</html>").toString();
         }
         protected void paintComponent(final Graphics graphics) {
@@ -591,13 +898,14 @@ public final class MacroLab extends JPanel {
                     if (max == min) { max++; min--; }
                     final double pad = (max - min) * 0.08; min -= pad; max += pad;
                 }
+                if (kind == 0 && showPatterns.isSelected()) paintPatterns(g, left, top, width, height);
                 axes(g, left, top, width, height, min, max);
                 g.setColor(INK); g.drawString(kind == 3 ? "Correlazione su " + window.getValue() + " mesi  ·  " + method.getSelectedItem() : "Scostamento dalla media  ·  " + transform.getSelectedItem(), left, 28);
                 for (int i = 0; i < values.length; i++) {
                     if (kind == 0
                             && !visible[i]
                             .isSelected()) continue;
-                    g.setColor(kind == 3 ? ACCENT : DataService.SOURCES[i].color()); g.setStroke(new BasicStroke(kind == 3 ? 2.6f : 1.8f));
+                    g.setColor(kind == 3 ? ACCENT : seriesColors[i]); g.setStroke(new BasicStroke(kind == 3 ? 2.6f : 1.8f));
                     final Path2D line = new Path2D.Double(); boolean connected = false;
                     for (int t = 0; t < size; t++) {
                         if (!Double.isFinite(values[i][t])) { connected = false; continue; }
@@ -608,8 +916,37 @@ public final class MacroLab extends JPanel {
                 }
                 g.setColor(MUTED);
                 for (int i = 0; i <= 4; i++) g.drawString(first.plusMonths((size - 1L) * i / 4).toString(), left + width * i / 4 - 20, top + height + 24);
-                g.drawString(kind == 3 ? "Passa sulla linea per leggere correlazione e numero di mesi." : "Scala comune: 1 = una deviazione standard; non è un rendimento.", left, getHeight() - 10);
+                g.drawString(kind == 3 ? "Passa sulla linea per leggere correlazione e numero di mesi." : showPatterns.isSelected() ? "Ocra: calo HICP · barre: EUR/USD, BTP, EURO 50 · rosso: discesa / verde: recupero" : "Scala comune: 1 = una deviazione standard; non è un rendimento.", left, getHeight() - 10);
             } finally { g.dispose(); }
+        }
+        void paintPatterns(final Graphics2D g, final int left, final int top, final int width, final int height) {
+            final long offset = java.time.temporal.ChronoUnit.MONTHS.between(first, studyFirst);
+            final double step = (double) width / (size - 1);
+            final Shape clip = g.getClip();
+            g.clipRect(left, top, width + 1, height + 1);
+            int ordinal = 0;
+            for (final PatternStudy.Event event : events) {
+                ordinal++;
+                final int signal = left + (int) Math.round((offset + event.signal()) * step);
+                final int begin = left + (int) Math.round((offset + event.start() - 0.5) * step);
+                g.setColor(new Color(inflationColor.getRed(), inflationColor.getGreen(), inflationColor.getBlue(), 28));
+                g.fillRect(begin, top, Math.max(2, signal - begin + (int) (step * 0.5)), height);
+                g.setColor(inflationColor);
+                g.setStroke(new BasicStroke(1));
+                g.drawLine(signal, top + 16, signal, top + height);
+                g.drawString(Integer.toString(ordinal), signal + 3, top + 12);
+                if (event.outcome() != PatternStudy.Outcome.CONFIRMED) continue;
+                for (int i = 0; i < event.legs().size(); i++) {
+                    final PatternStudy.Leg leg = event.legs().get(i);
+                    final int trough = left + (int) Math.round((offset + leg.trough()) * step);
+                    final int recovery = left + (int) Math.round((offset + leg.recovery()) * step);
+                    g.setColor(declineColor);
+                    g.fillRect(begin, top + height - 22 + i * 7, Math.max(2, trough - begin), 5);
+                    g.setColor(recoveryColor);
+                    g.fillRect(trough, top + height - 22 + i * 7, Math.max(2, recovery - trough), 5);
+                }
+            }
+            g.setClip(clip);
         }
         void axes(final Graphics2D g, final int left, final int top, final int width, final int height, final double min, final double max) {
             g.setStroke(new BasicStroke(1));
@@ -620,11 +957,11 @@ public final class MacroLab extends JPanel {
         }
         void heatmap(final Graphics2D g) {
             final int cell;
-            if ((cell = Math.min((getWidth() - 180) / 8, (getHeight() - 96) / 8)) < 10) return;
+            if ((cell = Math.min((getWidth() - 180) / DataService.SOURCES.length, (getHeight() - 96) / DataService.SOURCES.length)) < 10) return;
             g.setColor(INK); g.drawString(method.getSelectedItem() + "  ·  stesso mese  ·  n = mesi confrontabili", 26, 26);
-            for (int i = 0; i < 8; i++) {
+            for (int i = 0; i < DataService.SOURCES.length; i++) {
                 g.setColor(MUTED); g.drawString(name(i), 16, 64 + i * cell + cell / 2); g.setFont(new Font("Segoe UI", Font.PLAIN, 11)); g.drawString(MATRIX_NAMES[i], 142 + i * cell, 52); g.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-                for (int j = 0; j < 8; j++) {
+                for (int j = 0; j < DataService.SOURCES.length; j++) {
                     final Stats.Correlation c = correlations[j][i];
                     final double strength = Double.isFinite(c.value()) ? Math.abs(c.value()) : 0;
                     final Color target = c.value() >= 0 ? POSITIVE : NEGATIVE;
@@ -635,7 +972,7 @@ public final class MacroLab extends JPanel {
                 }
             }
             final int lx;
-            if (getWidth() - (lx = 162 + 8 * cell) > 180) {
+            if (getWidth() - (lx = 162 + DataService.SOURCES.length * cell) > 180) {
                 g.setColor(ACCENT); g.drawString("+1   Associazione diretta", lx, 100);
                 g.setColor(MUTED); g.drawString("  0   Associazione debole", lx, 130);
                 g.setColor(new Color(153, 75, 54)); g.drawString("−1   Associazione inversa", lx, 160);
@@ -680,9 +1017,11 @@ public final class MacroLab extends JPanel {
             System.err.println("Tema di sistema non disponibile: " + e.getMessage());
         }
         for (final String key : new String[]{"Panel.background", "TabbedPane.background", "CheckBox.background"}) UIManager.put(key, BG);
-        for (final String key : new String[]{"Viewport.background", "TextArea.background", "TextField.background", "Table.background"}) UIManager.put(key, PANEL);
+        for (final String key : new String[]{"Viewport.background", "TextArea.background", "TextField.background", "Table.background", "TableHeader.background"}) UIManager.put(key, PANEL);
         for (final String key : new String[]{"Label.foreground", "Button.foreground", "TextField.foreground", "TextArea.foreground", "ComboBox.foreground", "CheckBox.foreground", "TabbedPane.foreground", "Table.foreground"}) UIManager.put(key, INK);
         UIManager.put("TextField.caretForeground", INK); UIManager.put("Table.gridColor", GRID);
+        UIManager.put("Table.selectionBackground", new Color(229, 237, 232));
+        UIManager.put("Table.selectionForeground", INK);
         for (final String key : new String[]{"Label.font", "Button.font", "TextField.font", "ComboBox.font", "TabbedPane.font", "CheckBox.font", "Table.font", "TableHeader.font", "Spinner.font"}) UIManager.put(key, new Font("Segoe UI", Font.PLAIN, 13));
     }
 
@@ -695,7 +1034,7 @@ public final class MacroLab extends JPanel {
             return;
         }
         SwingUtilities.invokeLater(() -> {
-            theme(); final JFrame frame = new JFrame("Analisi dei mercati"); final MacroLab app = new MacroLab(data);
+            theme(); final JFrame frame = new JFrame("MacroLab · Osservatorio macro"); final MacroLab app = new MacroLab(data);
             frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE); frame.setContentPane(app); final Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds(); frame.setSize(Math.min(1360, screen.width), Math.min(900, screen.height)); frame.setMinimumSize(new Dimension(Math.min(1000, screen.width), Math.min(650, screen.height))); frame.setLocationRelativeTo(null); frame.setVisible(true); app.load(true);
         });
     }

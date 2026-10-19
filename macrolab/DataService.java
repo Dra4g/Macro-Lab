@@ -45,12 +45,12 @@ public final class DataService {
             if (key.startsWith("Y:"))
                 return "https://query1.finance.yahoo.com/v8/finance/chart/"
                         + URLEncoder.encode(key.substring(2), StandardCharsets.UTF_8)
-                        + "?period1=1262304000&period2="
+                        + "?period1=883612800&period2="
                         + Instant.now().getEpochSecond()
                         + "&interval=1mo";
             return "https://data-api.ecb.europa.eu/service/data/"
                     + key
-                    + "?startPeriod=2009-01-01&format=csvdata";
+                    + "?startPeriod=1998-01-01&format=csvdata";
         }
     }
     public static final Source[] SOURCES = {
@@ -61,14 +61,14 @@ public final class DataService {
         new Source("fx", "Cambio EUR / USD", "EUR/USD", "USD per EUR", false, "EXR/M.USD.EUR.SP00.E", "Cambio di riferimento BCE a fine mese. Un valore maggiore indica un euro più forte sul dollaro.", new Color(50, 125, 134)),
         new Source("market", "EURO STOXX 50", "EURO 50", "punti EUR", false, "Y:^STOXX50E", "Indice azionario generale scelto: EURO STOXX 50, grandi società dell'area euro, price return. Non rappresenta l'intero mercato mondiale.", new Color(91, 121, 62)),
         new Source("banks", "Banche europee (ETF)", "Banche ETF", "EUR", false, "Y:EXV1.DE", "iShares STOXX Europe 600 Banks (EXV1.DE), proxy dell'indice bancario europeo, inclusi paesi extra euro. Prezzi non rettificati; dividendi esclusi. Misura le azioni bancarie, non la stabilità del sistema.", new Color(156, 91, 45)),
-        new Source("yield", "Rendimento Italia 10 anni", "Italia 10a", "% annuo", true, "IRS/M.IT.L.L40.CI.0000.EUR.N.Z", "Tasso a lungo termine italiano ai fini della convergenza, scadenza circa 10 anni, media mensile BCE. Non è una serie di prezzi né il rendimento di un singolo ISIN.", new Color(88, 103, 113))
+        new Source("yield", "Rendimento Italia 10 anni", "Italia 10a", "% annuo", true, "IRS/M.IT.L.L40.CI.0000.EUR.N.Z", "Tasso a lungo termine italiano ai fini della convergenza, scadenza circa 10 anni, media mensile BCE. Non è una serie di prezzi né il rendimento di un singolo ISIN.", new Color(88, 103, 113)),
+        new Source("auto", "Auto europee (STOXX 600 · ETF)", "Auto ETF", "EUR", false, "Y:EXV5.DE", "Settore automobilistico europeo: iShares STOXX Europe 600 Automobiles & Parts UCITS ETF (EXV5.DE), proxy investibile del benchmark settoriale capped. Include costruttori e componentistica, anche fuori dall'area euro; non misura vendite di automobili né il mercato globale. Chiusure non rettificate, dividendi esclusi. Fondo lanciato nel 2002; lo storico del fornitore può iniziare dopo.", new Color(80, 107, 164))
     };
     public record Series(Source source,
                          TreeMap<YearMonth, Double> values,
                          String status,
                          String retrieved,
                          String url) {
-        //TODO: For now empty, but I'm planning to insert new objects
     }
     public record Dataset(List<Series> series) {
 
@@ -85,7 +85,7 @@ public final class DataService {
         }
 
         public YearMonth last() {
-            YearMonth last = YearMonth.of(2010, 1);
+            YearMonth last = YearMonth.of(2000, 1);
             for (final Series s : series) if (!s
                     .values
                     .isEmpty()
@@ -148,7 +148,7 @@ public final class DataService {
         Files.createDirectories(directory);
         final List<Series> result = new ArrayList<>(SOURCES.length);
         try (final HttpClient http = client(); final ExecutorService workers = Executors.newFixedThreadPool(4)) {
-            /* Quattro richieste alla volta, otto sorgenti. Ogni job possiede la sua
+            /* Quattro richieste alla volta. Ogni job possiede la sua
                mappa; Future.get() la consegna prima della pubblicazione su Swing. */
             final List<Callable<Series>> jobs = new ArrayList<>(SOURCES.length);
             for (final Source source : SOURCES) jobs.add(() -> loadOne(http, source, directory, online));
